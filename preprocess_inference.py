@@ -20,6 +20,8 @@ def preprocess_for_inference(df: pd.DataFrame, inplace: bool = False) -> pd.Data
     4. Compute 'popularity' from raw signals (search_trend, review_velocity, social_buzz)
        If signals missing, set popularity = 0.5 (neutral)
     5. Compute 'rolling_7d_sales' grouped by product_name
+    6. Compute 'inventory_ratio' = inventory_level / max_inventory (if available)
+       If inventory_level missing, set inventory_ratio = 0.5 (default)
     
     Args:
         df: Input DataFrame with pricing data
@@ -91,6 +93,21 @@ def preprocess_for_inference(df: pd.DataFrame, inplace: bool = False) -> pd.Data
         .reset_index(0, drop=True)
     )
     
+    # -------------------------
+    # 6. Compute inventory_ratio
+    # -------------------------
+    # Maximum inventory constant (must match training data)
+    max_inventory = 500
+    
+    if "inventory_level" in df.columns:
+        # Compute inventory_ratio if inventory_level is available
+        df["inventory_ratio"] = df["inventory_level"] / max_inventory
+        # Clip to valid range [0, 1]
+        df["inventory_ratio"] = df["inventory_ratio"].clip(0.0, 1.0)
+    else:
+        # Set default inventory_ratio if inventory_level not available
+        df["inventory_ratio"] = 0.5
+    
     return df
 
 
@@ -113,6 +130,7 @@ def extract_features_for_model(df: pd.DataFrame, product_row: pd.Series) -> pd.D
         "month": product_row.get("month", 1),
         "day_of_week": product_row.get("day_of_week", 0),
         "rolling_7d_sales": product_row.get("rolling_7d_sales", 0.0),
+        "inventory_ratio": product_row.get("inventory_ratio", 0.5),
     }
     
     return pd.DataFrame([features])
@@ -122,7 +140,7 @@ if __name__ == "__main__":
     # Example usage (for testing)
     import pandas as pd
     
-    # Sample data with all signals
+    # Sample data with all signals AND inventory_level
     sample_data_full = {
         "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
         "product_name": ["iPhone 14", "iPhone 14", "Galaxy S23"],
@@ -133,17 +151,18 @@ if __name__ == "__main__":
         "search_trend": [80.0, 85.0, 75.0],
         "review_velocity": [20.0, 22.0, 18.0],
         "social_buzz": [60.0, 65.0, 55.0],
+        "inventory_level": [300, 295, 280],
     }
     df_full = pd.DataFrame(sample_data_full)
     
     print("=" * 80)
-    print("TEST 1: Full dataset with all signals")
+    print("TEST 1: Full dataset with all signals AND inventory_level")
     print("=" * 80)
     df_processed = preprocess_for_inference(df_full)
     print(df_processed[["date", "product_name", "price", "month", "day_of_week", 
-                        "price_gap", "popularity", "rolling_7d_sales"]].to_string())
+                        "price_gap", "popularity", "rolling_7d_sales", "inventory_ratio"]].to_string())
     
-    # Sample data without signals (should use default popularity)
+    # Sample data without signals and without inventory_level (should use defaults)
     sample_data_minimal = {
         "date": ["2024-01-01", "2024-01-02"],
         "product_name": ["iPhone 14", "iPhone 14"],
@@ -155,10 +174,29 @@ if __name__ == "__main__":
     df_minimal = pd.DataFrame(sample_data_minimal)
     
     print("\n" + "=" * 80)
-    print("TEST 2: Minimal dataset (no signals, use default popularity=0.5)")
+    print("TEST 2: Minimal dataset (no signals, no inventory_level, use defaults)")
     print("=" * 80)
     df_processed_minimal = preprocess_for_inference(df_minimal)
     print(df_processed_minimal[["date", "product_name", "price", "month", "day_of_week", 
-                                "price_gap", "popularity", "rolling_7d_sales"]].to_string())
+                                "price_gap", "popularity", "rolling_7d_sales", "inventory_ratio"]].to_string())
+    
+    # Sample data with inventory_level but without signals
+    sample_data_inventory_only = {
+        "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
+        "product_name": ["iPhone 14", "iPhone 14", "Galaxy S23"],
+        "price": [800, 810, 750],
+        "competitor_price": [790, 800, 760],
+        "cost": [500, 500, 450],
+        "historical_demand": [100, 105, 95],
+        "inventory_level": [400, 350, 200],
+    }
+    df_inventory_only = pd.DataFrame(sample_data_inventory_only)
+    
+    print("\n" + "=" * 80)
+    print("TEST 3: With inventory_level but without signals (popularity=0.5 default)")
+    print("=" * 80)
+    df_processed_inventory = preprocess_for_inference(df_inventory_only)
+    print(df_processed_inventory[["date", "product_name", "price", "month", "day_of_week", 
+                                   "price_gap", "popularity", "rolling_7d_sales", "inventory_ratio"]].to_string())
     
     print("\n✓ All preprocessing tests passed!")
