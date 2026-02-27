@@ -42,10 +42,10 @@ st.subheader("📌 Current Market Snapshot")
 
 col1, col2, col3, col4, col5 = st.columns(5)
 
-col1.metric("Current Price", f"₹{latest_record['price'] * 83:.2f}")
-col2.metric("Competitor Price", f"₹{latest_record['competitor_price'] * 83:.2f}")
+col1.metric("Current Price", f"₹{latest_record['price'] * 91:.2f}")
+col2.metric("Competitor Price", f"₹{latest_record['competitor_price'] * 91:.2f}")
 col3.metric("Historical Demand (Observed Sales)", int(latest_record["historical_demand"]))
-col4.metric("Cost", f"₹{latest_record['cost'] * 83:.2f}")
+col4.metric("Cost", f"₹{latest_record['cost'] * 91:.2f}")
 col5.metric("Popularity Score", round(latest_record["popularity"], 3))
 
 # ---------------------------

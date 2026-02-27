@@ -23,6 +23,11 @@ st.set_page_config(
 )
 
 # -------------------------
+# Currency Configuration
+# -------------------------
+USD_TO_INR = 91  # Exchange rate: 1 USD = 91 INR
+
+# -------------------------
 # Helpers
 # -------------------------
 
@@ -151,7 +156,20 @@ latest = product_rows.iloc[0]  # Only one row per product after get_latest_row_p
 # Optional raw display
 if show_raw:
     st.subheader("Latest raw record")
-    st.json(latest.to_dict())
+    # Convert dollar amounts to rupees for display
+    display_record = latest.to_dict()
+    
+    # Currency conversion rate
+    USD_TO_INR = 91
+    
+    # Price-related columns to convert
+    price_columns = ["price", "competitor_price", "cost"]
+    
+    for col in price_columns:
+        if col in display_record:
+            display_record[col] = display_record[col] * USD_TO_INR
+    
+    st.json(display_record)
 
 # -------------------------
 # Market Snapshot
@@ -165,10 +183,10 @@ current_demand = latest.get("historical_demand", np.nan)
 cost = latest.get("cost", np.nan)
 popularity = latest.get("popularity", np.nan)
 
-col1.metric("Current Price", f"₹{current_price * 83:.2f}" if pd.notna(current_price) else "N/A")
-col2.metric("Competitor Price", f"₹{competitor_price * 83:.2f}" if pd.notna(competitor_price) else "N/A")
+col1.metric("Current Price", f"₹{current_price * USD_TO_INR:.2f}" if pd.notna(current_price) else "N/A")
+col2.metric("Competitor Price", f"₹{competitor_price * USD_TO_INR:.2f}" if pd.notna(competitor_price) else "N/A")
 col3.metric("Historical Demand (Observed Sales)", f"{int(current_demand)}" if pd.notna(current_demand) else "N/A")
-col4.metric("Cost", f"₹{cost * 83:.2f}" if pd.notna(cost) else "N/A")
+col4.metric("Cost", f"₹{cost * USD_TO_INR:.2f}" if pd.notna(cost) else "N/A")
 col5.metric("Popularity", f"{popularity:.2f}" if pd.notna(popularity) else "N/A")
 
 today = pd.Timestamp.now().date()
@@ -320,7 +338,7 @@ ax1.set_title("Demand vs Price")
 ax1.grid(axis="y", linestyle="--", alpha=0.4)
 if rec_price is not None:
     ax1.axvline(rec_price, color="green", linestyle="--", lw=2)
-    ax1.annotate(f"Optimal: ₹{rec_price * 83:.2f}", xy=(rec_price, sim_results["forecasted_demand"].max()),
+    ax1.annotate(f"Optimal: ₹{rec_price * USD_TO_INR:.2f}", xy=(rec_price, sim_results["forecasted_demand"].max()),
                  xytext=(rec_price, sim_results["forecasted_demand"].max()*0.9),
                  arrowprops=dict(arrowstyle="->", color="green"), color="green")
 
@@ -333,7 +351,7 @@ ax2.set_title("Profit vs Price")
 ax2.grid(axis="y", linestyle="--", alpha=0.4)
 if rec_price is not None:
     ax2.axvline(rec_price, color="green", linestyle="--", lw=2)
-    ax2.annotate(f"Optimal: ₹{rec_price * 83:.2f}", xy=(rec_price, sim_results["predicted_profit"].max()),
+    ax2.annotate(f"Optimal: ₹{rec_price * USD_TO_INR:.2f}", xy=(rec_price, sim_results["predicted_profit"].max()),
                  xytext=(rec_price, sim_results["predicted_profit"].max()*0.9),
                  arrowprops=dict(arrowstyle="->", color="green"), color="green")
 
@@ -354,14 +372,14 @@ if rec_price is None:
     st.error("Could not compute recommendation.")
 else:
     if status == "Price is Optimal":
-        st.success(f"Recommended Price: ₹{rec_price * 83:.2f} — {status}")
+        st.success(f"Recommended Price: ₹{rec_price * USD_TO_INR:.2f} — {status}")
     elif status and status.startswith("Overpriced"):
-        st.warning(f"Recommended Price: ₹{rec_price * 83:.2f} — {status}")
+        st.warning(f"Recommended Price: ₹{rec_price * USD_TO_INR:.2f} — {status}")
     else:
         # Use transparent markdown instead of st.info()
-        st.markdown(f"**Recommended Price:** ₹{rec_price * 83:.2f} — {status}")
+        st.markdown(f"**Recommended Price:** ₹{rec_price * USD_TO_INR:.2f} — {status}")
 
-    st.write(f"Expected Profit at recommended price: ₹{rec_profit * 83:.2f}")
+    st.write(f"Expected Profit at recommended price: ₹{rec_profit * USD_TO_INR:.2f}")
     
     # -------- Simulated Adaptive Update (visual demonstration) --------
     st.divider()
