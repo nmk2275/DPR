@@ -198,7 +198,7 @@ def recommend_price(product_row):
 def price_status(current_price, optimal_price):
 
     if current_price > optimal_price * 1.05:
-        return "Overpriced - Suggest Discount"
+        return "Overpriced- Suggest Discount"
 
     elif current_price < optimal_price * 0.95:
         return "Underpriced - Increase Margin"
