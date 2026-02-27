@@ -39,8 +39,8 @@ def recommend_price(product_row):
             "rolling_7d_sales": rolling_sales
         }])
 
-        predicted_demand = model.predict(input_data)[0]
-        profit = (price - cost) * predicted_demand
+        forecasted_demand = model.predict(input_data)[0]
+        profit = (price - cost) * forecasted_demand
 
         if profit > best_profit:
             best_profit = profit

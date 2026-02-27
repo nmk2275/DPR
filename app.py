@@ -44,7 +44,7 @@ col1, col2, col3, col4, col5 = st.columns(5)
 
 col1.metric("Current Price", f"${latest_record['price']:.2f}")
 col2.metric("Competitor Price", f"${latest_record['competitor_price']:.2f}")
-col3.metric("Current Demand", int(latest_record["quantity"]))
+col3.metric("Historical Demand (Observed Sales)", int(latest_record["historical_demand"]))
 col4.metric("Cost", f"${latest_record['cost']:.2f}")
 col5.metric("Popularity Score", round(latest_record["popularity"], 3))
 
@@ -75,10 +75,10 @@ for price in price_range:
         "rolling_7d_sales": latest_record["rolling_7d_sales"]
     }])
 
-    demand = model.predict(input_data)[0]
-    profit = (price - latest_record["cost"]) * demand
+    forecasted_demand = model.predict(input_data)[0]
+    profit = (price - latest_record["cost"]) * forecasted_demand
 
-    predicted_demand.append(demand)
+    predicted_demand.append(forecasted_demand)
     predicted_profit.append(profit)
 
 # ---------------------------

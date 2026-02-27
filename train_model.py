@@ -32,7 +32,8 @@ features = [
 ]
 
 X = df[features]
-y = df["quantity"]
+# Target renamed to historical_demand
+y = df["historical_demand"]
 
 # -------------------------
 # Train/Test Split

@@ -81,13 +81,13 @@ col1, col2, col3, col4, col5 = st.columns(5)
 
 current_price = latest.get("price", np.nan)
 competitor_price = latest.get("competitor_price", np.nan)
-current_demand = latest.get("quantity", np.nan)
+current_demand = latest.get("historical_demand", np.nan)
 cost = latest.get("cost", np.nan)
 popularity = latest.get("popularity", np.nan)
 
 col1.metric("Current Price", f"${current_price:.2f}" if pd.notna(current_price) else "N/A")
 col2.metric("Competitor Price", f"${competitor_price:.2f}" if pd.notna(competitor_price) else "N/A")
-col3.metric("Current Demand", f"{int(current_demand)}" if pd.notna(current_demand) else "N/A")
+col3.metric("Historical Demand (Observed Sales)", f"{int(current_demand)}" if pd.notna(current_demand) else "N/A")
 col4.metric("Cost", f"${cost:.2f}" if pd.notna(cost) else "N/A")
 col5.metric("Popularity", f"{popularity:.2f}" if pd.notna(popularity) else "N/A")
 
@@ -130,13 +130,13 @@ if model is None:
     st.error("Demand model not loaded. Ensure demand_model.pkl exists and price_optimizer loads it.")
     st.stop()
 
-predicted_demand = model.predict(sim_inputs)
-predicted_profit = (price_range - cost_val) * predicted_demand
+forecasted_demand = model.predict(sim_inputs)
+predicted_profit = (price_range - cost_val) * forecasted_demand
 
 # Store results in DataFrame
 sim_results = pd.DataFrame({
     "price": price_range,
-    "predicted_demand": predicted_demand,
+    "forecasted_demand": forecasted_demand,
     "predicted_profit": predicted_profit,
 })
 
@@ -156,15 +156,15 @@ except Exception as e:
 
 # Demand vs Price
 fig1, ax1 = plt.subplots(figsize=(8, 4))
-ax1.plot(sim_results["price"], sim_results["predicted_demand"], color="#1f77b4", lw=2)
+ax1.plot(sim_results["price"], sim_results["forecasted_demand"], color="#1f77b4", lw=2)
 ax1.set_xlabel("Price")
 ax1.set_ylabel("Predicted Demand")
 ax1.set_title("Demand vs Price")
 ax1.grid(axis="y", linestyle="--", alpha=0.4)
 if rec_price is not None:
     ax1.axvline(rec_price, color="green", linestyle="--", lw=2)
-    ax1.annotate(f"Optimal: ${rec_price:.2f}", xy=(rec_price, sim_results["predicted_demand"].max()),
-                 xytext=(rec_price, sim_results["predicted_demand"].max()*0.9),
+    ax1.annotate(f"Optimal: ${rec_price:.2f}", xy=(rec_price, sim_results["forecasted_demand"].max()),
+                 xytext=(rec_price, sim_results["forecasted_demand"].max()*0.9),
                  arrowprops=dict(arrowstyle="->", color="green"), color="green")
 
 # Profit vs Price

@@ -9,6 +9,10 @@ OUTPUT_CSV = BASE_DIR / "processed_pricing_data.csv"
 # Load dataset
 df = pd.read_csv(INPUT_CSV)
 
+# If raw file uses 'quantity', rename to 'historical_demand' for clarity
+if 'quantity' in df.columns and 'historical_demand' not in df.columns:
+    df = df.rename(columns={'quantity': 'historical_demand'})
+
 # Convert date
 df['date'] = pd.to_datetime(df['date'])
 
@@ -43,7 +47,7 @@ df['price_gap'] = df['price'] - df['competitor_price']
 df = df.sort_values(['product_id', 'date'])
 
 df['rolling_7d_sales'] = (
-    df.groupby('product_id')['quantity']
+    df.groupby('product_id')['historical_demand']
       .rolling(window=7, min_periods=1)
       .mean()
       .reset_index(0, drop=True)
