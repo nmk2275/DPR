@@ -171,6 +171,17 @@ col3.metric("Historical Demand (Observed Sales)", f"{int(current_demand)}" if pd
 col4.metric("Cost", f"${cost:.2f}" if pd.notna(cost) else "N/A")
 col5.metric("Popularity", f"{popularity:.2f}" if pd.notna(popularity) else "N/A")
 
+today = pd.Timestamp.now().date()
+is_black_friday = (today.month == 11) and (today.day >= 21)
+is_new_year = (today.month == 1) and (today.day <= 5)
+is_festival = today.month in (10, 11, 12)
+if is_black_friday:
+    st.info("Today is Black Friday")
+if is_new_year:
+    st.info("Today is New Year")
+if is_festival:
+    st.info("Today is Festival Season")
+
 st.markdown("---")
 
 # -------------------------
@@ -193,15 +204,41 @@ day_of_week_val = latest.get("day_of_week", 0)
 rolling_sales_val = latest.get("rolling_7d_sales", 0.0)
 cost_val = latest.get("cost", 0.0)
 
+# Cyclical encodings (model expects these)
+month_num = int(month_val) if pd.notna(month_val) else 1
+dow_num = int(day_of_week_val) if pd.notna(day_of_week_val) else 0
+month_sin_val = np.sin(2 * np.pi * month_num / 12)
+month_cos_val = np.cos(2 * np.pi * month_num / 12)
+dow_sin_val = np.sin(2 * np.pi * dow_num / 7)
+dow_cos_val = np.cos(2 * np.pi * dow_num / 7)
+
+# Calendar flags (use latest date if available)
+date_val = latest.get("date", pd.Timestamp.now())
+if hasattr(date_val, "month") and hasattr(date_val, "day"):
+    is_black_friday_val = 1 if (date_val.month == 11 and date_val.day >= 21) else 0
+    is_new_year_val = 1 if (date_val.month == 1 and date_val.day <= 5) else 0
+    is_festival_season_val = 1 if date_val.month in (10, 11, 12) else 0
+else:
+    is_black_friday_val = int(latest.get("is_black_friday", 0))
+    is_new_year_val = int(latest.get("is_new_year", 0))
+    is_festival_season_val = int(latest.get("is_festival_season", 0))
+
 # Prepare input dataframe for batch prediction
 sim_inputs = pd.DataFrame({
     "price": price_range,
     "competitor_price": competitor_price_val,
     "price_gap": price_range - competitor_price_val,
     "popularity": popularity_val,
-    "month": month_val,
-    "day_of_week": day_of_week_val,
+    "month": month_num,
+    "day_of_week": dow_num,
+    "month_sin": month_sin_val,
+    "month_cos": month_cos_val,
+    "dow_sin": dow_sin_val,
+    "dow_cos": dow_cos_val,
     "rolling_7d_sales": rolling_sales_val,
+    "is_black_friday": is_black_friday_val,
+    "is_new_year": is_new_year_val,
+    "is_festival_season": is_festival_season_val,
 })
 
 # Predict demand using the loaded model (price_optimizer loaded model on import)

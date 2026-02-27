@@ -18,6 +18,8 @@ def recommend_price(product_row):
     popularity = product_row["popularity"]
     rolling_sales = product_row["rolling_7d_sales"]
     current_price = product_row["price"]
+    demand_volatility = product_row.get("demand_volatility", 0.0)
+    is_festival_season = product_row.get("is_festival_season", 0)
 
     # Candidate price range (±20%)
     price_range = np.linspace(current_price * 0.8,
@@ -36,16 +38,28 @@ def recommend_price(product_row):
             "popularity": popularity,
             "month": month,
             "day_of_week": product_row["day_of_week"],
-            "rolling_7d_sales": rolling_sales
+            "month_sin": product_row.get("month_sin", 0.0),
+            "month_cos": product_row.get("month_cos", 0.0),
+            "dow_sin": product_row.get("dow_sin", 0.0),
+            "dow_cos": product_row.get("dow_cos", 0.0),
+            "rolling_7d_sales": rolling_sales,
+            "is_black_friday": product_row.get("is_black_friday", 0),
+            "is_new_year": product_row.get("is_new_year", 0),
+            "is_festival_season": is_festival_season
         }])
 
         forecasted_demand = model.predict(input_data)[0]
-        profit = (price - cost) * forecasted_demand
+        
+        # Reward formula with volatility penalty
+        # During festival season, reduce volatility penalty
+        volatility_penalty_weight = 0.1 if is_festival_season == 1 else 0.2
+        reward = (price - cost) * forecasted_demand - volatility_penalty_weight * demand_volatility
 
-        if profit > best_profit:
-            best_profit = profit
+        if reward > best_profit:
+            best_profit = reward
             best_price = price
 
+    best_price = np.clip(best_price, current_price * 0.9, current_price * 1.1)
     return best_price, best_profit
 
 

@@ -14,7 +14,7 @@ INPUT_CSV = BASE_DIR / "processed_pricing_data.csv"
 df = pd.read_csv(INPUT_CSV)
 
 # Take latest record of one product
-sample = df[df["product_id"] == 1].iloc[-1]
+sample = df[df["product_id"] == 5].iloc[-1]
 
 optimal_price, expected_profit = recommend_price(sample)
 

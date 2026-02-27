@@ -28,7 +28,14 @@ features = [
     "popularity",
     "month",
     "day_of_week",
-    "rolling_7d_sales"
+    "month_sin",
+    "month_cos",
+    "dow_sin",
+    "dow_cos",
+    "rolling_7d_sales",
+    "is_black_friday",
+    "is_new_year",
+    "is_festival_season"
 ]
 
 X = df[features]
