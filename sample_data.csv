@@ -1,0 +1,36 @@
+date,product_name,price,competitor_price,cost,search_trend,review_velocity,social_buzz,historical_demand
+2024-01-01,SmartFit Pro Watch,199,189,120,65,18,55,132
+2024-01-02,SmartFit Pro Watch,195,188,120,67,19,60,138
+2024-01-03,SmartFit Pro Watch,205,190,120,63,16,50,120
+2024-01-04,SmartFit Pro Watch,210,192,120,60,14,48,110
+2024-01-05,SmartFit Pro Watch,198,187,120,70,20,62,142
+
+2024-01-01,UltraSound X Headphones,149,140,85,58,12,45,115
+2024-01-02,UltraSound X Headphones,155,142,85,55,10,40,102
+2024-01-03,UltraSound X Headphones,140,138,85,62,14,50,130
+2024-01-04,UltraSound X Headphones,135,130,85,68,18,60,150
+2024-01-05,UltraSound X Headphones,160,145,85,52,9,35,90
+
+2024-01-01,PowerMax Gaming Laptop,1299,1250,900,72,25,68,85
+2024-01-02,PowerMax Gaming Laptop,1350,1280,900,68,22,60,75
+2024-01-03,PowerMax Gaming Laptop,1200,1220,900,78,30,75,105
+2024-01-04,PowerMax Gaming Laptop,1400,1300,900,60,18,55,65
+2024-01-05,PowerMax Gaming Laptop,1250,1240,900,74,27,70,95
+
+2024-01-01,EcoBreeze Air Purifier,249,235,160,55,11,42,98
+2024-01-02,EcoBreeze Air Purifier,260,240,160,50,9,38,85
+2024-01-03,EcoBreeze Air Purifier,230,225,160,62,14,48,120
+2024-01-04,EcoBreeze Air Purifier,220,218,160,65,16,52,130
+2024-01-05,EcoBreeze Air Purifier,270,245,160,48,8,35,78
+
+2024-01-01,VisionX 4K Smart TV,899,870,650,70,21,60,110
+2024-01-02,VisionX 4K Smart TV,950,890,650,65,18,55,95
+2024-01-03,VisionX 4K Smart TV,870,860,650,75,25,70,130
+2024-01-04,VisionX 4K Smart TV,920,880,650,68,20,58,105
+2024-01-05,VisionX 4K Smart TV,980,910,650,60,15,50,85
+
+2024-01-01,FitPulse Wireless Earbuds,89,80,45,75,28,72,180
+2024-01-02,FitPulse Wireless Earbuds,95,85,45,70,24,65,160
+2024-01-03,FitPulse Wireless Earbuds,78,75,45,82,32,80,210
+2024-01-04,FitPulse Wireless Earbuds,72,70,45,85,35,85,230
+2024-01-05,FitPulse Wireless Earbuds,100,88,45,65,20,60,140

@@ -26,15 +26,33 @@ catalog = [
 products = []
 
 product_id = 1
+premium_brands = {"Apple", "Sony", "Microsoft"}
+
 for brand, model, category, base_price in catalog:
     cost = int(base_price * random.uniform(0.6, 0.8))
+    
+    # Set brand-based elasticity parameters once per product
+    if brand in premium_brands:
+        # Premium brands: low price sensitivity
+        beta = np.random.uniform(0.05, 0.12)      # Own-price elasticity
+        theta = np.random.uniform(0.2, 0.5)       # Competitive penalty
+    else:
+        # Non-premium brands: high price sensitivity
+        beta = np.random.uniform(0.4, 0.9)        # Own-price elasticity
+        theta = np.random.uniform(1.5, 3.0)       # Competitive penalty
+    
+    gamma = np.random.uniform(20.0, 60.0)        # Popularity coefficient
+    
     products.append({
         "product_id": product_id,
         "product_name": f"{brand} {model}",
         "brand": brand,
         "category": category,
         "base_price": base_price,
-        "cost": cost
+        "cost": cost,
+        "beta": beta,
+        "theta": theta,
+        "gamma": gamma
     })
     product_id += 1
 
@@ -107,28 +125,36 @@ for product in products:
         )
 
         # -------------------------------
-        # 7. DEMAND GENERATION (USER-SPECIFIED MODEL)
+        # 7. DEMAND GENERATION (BRAND-BASED ELASTICITY MODEL)
         # -------------------------------
-
-        # Randomized baseline demand per observation
-        base_demand = np.random.randint(80, 150)
-
-        # Random elasticities to introduce heterogeneity
-        price_sensitivity = np.random.uniform(1.5, 3.5)
-        competition_sensitivity = np.random.uniform(2.0, 4.0)
-
-        # Demand formula: stronger own-price effect, penalty when price > competitor,
-        # keeps popularity influence, adds small Gaussian noise, and retains season/lifecycle
+        # Q = BaseDemand - β·Price - θ·max(0, Price - CompetitorPrice) + γ·Popularity + ε
+        
+        # Randomized baseline demand per observation (higher baseline for all products)
+        base_demand = np.random.randint(200, 350)
+        
+        # Use per-product elasticity parameters (set once at product initialization)
+        beta = product["beta"]
+        theta = product["theta"]
+        gamma = product["gamma"]
+        
+        # Competitive penalty: only applies if we price above competitor
+        competitive_penalty = max(0.0, price - competitor_price)
+        
+        # Normalize price relative to base price for elasticity calculation
+        # This prevents high-priced products (laptop) from collapsing to floor
+        normalized_price = price / product["base_price"]
+        
+        # Demand formula: Q = BaseDemand - β·(Price/BasePrice) - θ·max(0, Price - CompetitorPrice) + γ·Popularity + ε
         demand = (
             base_demand
-            - price_sensitivity * price
-            - competition_sensitivity * max(0, price - competitor_price)
-            + 20.0 * true_popularity
+            - beta * normalized_price * 100.0  # Scale normalized price by 100 for demand effect
+            - theta * competitive_penalty / 10.0  # Scale competitive penalty down
+            + gamma * true_popularity
             + np.random.normal(0, 5)
         ) * season_factor * lifecycle_factor
-
-        # Enforce realistic lower bound and integer units
-        demand = max(5.0, demand)
+        
+        # Enforce realistic lower bound (minimum 10 instead of 5) and integer units
+        demand = max(10.0, demand)
         demand = int(round(demand))
 
         rows.append([
