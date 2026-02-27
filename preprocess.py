@@ -93,15 +93,47 @@ df['is_festival_season'] = (df['date'].dt.month.isin([10, 11, 12])).astype(int)
 # 6. Inventory Management
 # -----------------------------
 
-# Maximum inventory capacity
+# Maximum inventory capacity (constant)
 max_inventory = 500
 
-# Generate synthetic inventory levels (random between 50 and 500)
-np.random.seed(42)  # For reproducibility
-df['inventory_level'] = np.random.randint(50, max_inventory + 1, size=len(df))
+# Initialize inventory tracking
+# For each product_id, start with 400 units and reduce daily by historical_demand
+df = df.sort_values(['product_id', 'date']).reset_index(drop=True)
+
+inventory_levels = []
+
+for product_id in df['product_id'].unique():
+    product_data = df[df['product_id'] == product_id].copy()
+    
+    # Initialize inventory at 400 units for this product
+    current_inventory = 400
+    product_inventories = []
+    
+    for idx, row in product_data.iterrows():
+        # Reduce inventory by historical demand for this day
+        current_inventory -= row['historical_demand']
+        
+        # Inventory should never go below 0
+        current_inventory = max(0, current_inventory)
+        
+        product_inventories.append(current_inventory)
+    
+    # Add product inventories to the main list in order
+    for idx, inv in zip(product_data.index, product_inventories):
+        inventory_levels.append((idx, inv))
+
+# Create inventory_level column from the sorted list
+inventory_dict = {idx: inv for idx, inv in inventory_levels}
+df['inventory_level'] = df.index.map(inventory_dict)
+
+# Create inventory_ratio feature
+df['inventory_ratio'] = df['inventory_level'] / max_inventory
 
 # Add max_inventory as a constant column
 df['max_inventory'] = max_inventory
+
+# Sort by product_id and date for reproducibility
+df = df.sort_values(['product_id', 'date']).reset_index(drop=True)
 
 # -----------------------------
 # Final Clean Dataset
