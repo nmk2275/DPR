@@ -165,10 +165,10 @@ current_demand = latest.get("historical_demand", np.nan)
 cost = latest.get("cost", np.nan)
 popularity = latest.get("popularity", np.nan)
 
-col1.metric("Current Price", f"${current_price:.2f}" if pd.notna(current_price) else "N/A")
-col2.metric("Competitor Price", f"${competitor_price:.2f}" if pd.notna(competitor_price) else "N/A")
+col1.metric("Current Price", f"₹{current_price * 83:.2f}" if pd.notna(current_price) else "N/A")
+col2.metric("Competitor Price", f"₹{competitor_price * 83:.2f}" if pd.notna(competitor_price) else "N/A")
 col3.metric("Historical Demand (Observed Sales)", f"{int(current_demand)}" if pd.notna(current_demand) else "N/A")
-col4.metric("Cost", f"${cost:.2f}" if pd.notna(cost) else "N/A")
+col4.metric("Cost", f"₹{cost * 83:.2f}" if pd.notna(cost) else "N/A")
 col5.metric("Popularity", f"{popularity:.2f}" if pd.notna(popularity) else "N/A")
 
 today = pd.Timestamp.now().date()
@@ -223,11 +223,11 @@ else:
     is_new_year_val = int(latest.get("is_new_year", 0))
     is_festival_season_val = int(latest.get("is_festival_season", 0))
 
-# Prepare input dataframe for batch prediction
-sim_inputs = pd.DataFrame({
-    "price": price_range,
+# Base feature values (will be aligned to model's expected feature names)
+base_features = {
+    "price": current_price,
     "competitor_price": competitor_price_val,
-    "price_gap": price_range - competitor_price_val,
+    "price_gap": current_price - competitor_price_val,
     "popularity": popularity_val,
     "month": month_num,
     "day_of_week": dow_num,
@@ -239,13 +239,53 @@ sim_inputs = pd.DataFrame({
     "is_black_friday": is_black_friday_val,
     "is_new_year": is_new_year_val,
     "is_festival_season": is_festival_season_val,
-})
+}
 
 # Predict demand using the loaded model (price_optimizer loaded model on import)
 model = getattr(price_optimizer, "model", None)
 if model is None:
     st.error("Demand model not loaded. Ensure demand_model.pkl exists and price_optimizer loads it.")
     st.stop()
+
+# Align simulation inputs to the model's actual feature set and order
+model_features = None
+try:
+    booster = model.get_booster()
+    model_features = getattr(booster, "feature_names", None)
+except Exception:
+    model_features = getattr(model, "feature_names_in_", None)
+
+if not model_features:
+    # Fallback to the training-time feature list (kept in sync with train_model.py)
+    model_features = [
+        "price",
+        "competitor_price",
+        "price_gap",
+        "popularity",
+        "month",
+        "day_of_week",
+        "month_sin",
+        "month_cos",
+        "dow_sin",
+        "dow_cos",
+        "rolling_7d_sales",
+        "is_black_friday",
+        "is_new_year",
+        "is_festival_season",
+    ]
+
+data = {}
+for name in model_features:
+    if name == "price":
+        data[name] = price_range
+    elif name == "price_gap":
+        data[name] = price_range - competitor_price_val
+    else:
+        # Broadcast scalar feature across the simulation grid
+        value = base_features.get(name, 0.0)
+        data[name] = np.full_like(price_range, value, dtype=float)
+
+sim_inputs = pd.DataFrame(data)
 
 forecasted_demand = model.predict(sim_inputs)
 predicted_profit = (price_range - cost_val) * forecasted_demand
@@ -280,7 +320,7 @@ ax1.set_title("Demand vs Price")
 ax1.grid(axis="y", linestyle="--", alpha=0.4)
 if rec_price is not None:
     ax1.axvline(rec_price, color="green", linestyle="--", lw=2)
-    ax1.annotate(f"Optimal: ${rec_price:.2f}", xy=(rec_price, sim_results["forecasted_demand"].max()),
+    ax1.annotate(f"Optimal: ₹{rec_price * 83:.2f}", xy=(rec_price, sim_results["forecasted_demand"].max()),
                  xytext=(rec_price, sim_results["forecasted_demand"].max()*0.9),
                  arrowprops=dict(arrowstyle="->", color="green"), color="green")
 
@@ -293,7 +333,7 @@ ax2.set_title("Profit vs Price")
 ax2.grid(axis="y", linestyle="--", alpha=0.4)
 if rec_price is not None:
     ax2.axvline(rec_price, color="green", linestyle="--", lw=2)
-    ax2.annotate(f"Optimal: ${rec_price:.2f}", xy=(rec_price, sim_results["predicted_profit"].max()),
+    ax2.annotate(f"Optimal: ₹{rec_price * 83:.2f}", xy=(rec_price, sim_results["predicted_profit"].max()),
                  xytext=(rec_price, sim_results["predicted_profit"].max()*0.9),
                  arrowprops=dict(arrowstyle="->", color="green"), color="green")
 
@@ -314,14 +354,40 @@ if rec_price is None:
     st.error("Could not compute recommendation.")
 else:
     if status == "Price is Optimal":
-        st.success(f"Recommended Price: ${rec_price:.2f} — {status}")
+        st.success(f"Recommended Price: ₹{rec_price * 83:.2f} — {status}")
     elif status and status.startswith("Overpriced"):
-        st.warning(f"Recommended Price: ${rec_price:.2f} — {status}")
+        st.warning(f"Recommended Price: ₹{rec_price * 83:.2f} — {status}")
     else:
         # Use transparent markdown instead of st.info()
-        st.markdown(f"**Recommended Price:** ${rec_price:.2f} — {status}")
+        st.markdown(f"**Recommended Price:** ₹{rec_price * 83:.2f} — {status}")
 
-    st.write(f"Expected Profit at recommended price: ${rec_profit:.2f}")
+    st.write(f"Expected Profit at recommended price: ₹{rec_profit * 83:.2f}")
+    
+    # -------- Simulated Adaptive Update (visual demonstration) --------
+    st.divider()
+    st.subheader("Adaptive Learning Simulation")
+    
+    # Simulate demand at optimal price
+    optimal_price_input = pd.DataFrame([{
+        name: (rec_price if name == "price" else 
+                rec_price - competitor_price_val if name == "price_gap" else 
+                base_features.get(name, 0.0))
+        for name in model_features
+    }])
+    predicted_demand_at_optimal = model.predict(optimal_price_input)[0]
+    
+    # Simulate rolling sales update with exponential smoothing
+    rolling_7d_sales = latest.get("rolling_7d_sales", 0.0)
+    new_rolling_sales = 0.7 * rolling_7d_sales + 0.3 * predicted_demand_at_optimal
+    
+    # Display the update
+    col1_update, col2_update = st.columns(2)
+    with col1_update:
+        st.metric("Previous Rolling 7-day Sales", f"{rolling_7d_sales:.2f} units")
+    with col2_update:
+        st.metric("Simulated Updated Rolling Sales", f"{new_rolling_sales:.2f} units")
+    
+    st.info("📊 Simulated adaptive update: rolling sales adjusted based on predicted demand at optimal price.")
 
 # -------------------------
 # Notes and footer

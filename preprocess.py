@@ -90,6 +90,20 @@ df['is_new_year'] = ((df['date'].dt.month == 1) &
 df['is_festival_season'] = (df['date'].dt.month.isin([10, 11, 12])).astype(int)
 
 # -----------------------------
+# 6. Inventory Management
+# -----------------------------
+
+# Maximum inventory capacity
+max_inventory = 500
+
+# Generate synthetic inventory levels (random between 50 and 500)
+np.random.seed(42)  # For reproducibility
+df['inventory_level'] = np.random.randint(50, max_inventory + 1, size=len(df))
+
+# Add max_inventory as a constant column
+df['max_inventory'] = max_inventory
+
+# -----------------------------
 # Final Clean Dataset
 # -----------------------------
 
