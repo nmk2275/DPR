@@ -8,6 +8,12 @@ from pathlib import Path
 from price_optimizer import recommend_price, price_status
 import price_optimizer
 
+# Import dataset validation
+from validate_dataset import validate_dataset_streamlit
+
+# Import preprocessing utilities
+from preprocess_inference import preprocess_for_inference
+
 # -------------------------
 # Page config
 # -------------------------
@@ -23,6 +29,28 @@ st.set_page_config(
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "processed_pricing_data.csv"
 
+def get_latest_row_per_product(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Select the latest row per product (sorted by date).
+    
+    Args:
+        df: Preprocessed DataFrame
+    
+    Returns:
+        pd.DataFrame: One row per product (latest by date)
+    """
+    if "date" not in df.columns:
+        st.error("Date column not found in dataset")
+        st.stop()
+    
+    # Ensure date is datetime
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    
+    # Sort by product and date, then get the last row per product
+    latest = df.sort_values("date").groupby("product_name", as_index=False).tail(1)
+    
+    return latest
+
 @st.cache_data
 def load_data(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
@@ -31,16 +59,15 @@ def load_data(path: Path) -> pd.DataFrame:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
     return df
 
-# Load dataset
-try:
-    df = load_data(DATA_PATH)
-except FileNotFoundError:
-    st.error(f"Processed data not found at {DATA_PATH}. Run preprocess.py first.")
-    st.stop()
-
-if df.empty:
-    st.error("Processed dataset is empty.")
-    st.stop()
+@st.cache_data
+def load_data_from_bytes(file_bytes) -> pd.DataFrame:
+    """Load CSV from uploaded file bytes."""
+    import io
+    df = pd.read_csv(io.BytesIO(file_bytes))
+    # Basic safety: ensure date is datetime
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    return df
 
 # -------------------------
 # UI - Title & Sidebar
@@ -49,24 +76,77 @@ if df.empty:
 st.title("Dynamic Electronics Pricing Intelligence System")
 st.markdown("---")
 
-# Sidebar: product selection
-with st.sidebar.form(key="product_select_form"):
-    st.header("Product Selector")
-    product_list = df["product_name"].dropna().unique().tolist()
-    product_list.sort()
-    selected_product = st.selectbox("Select Product", product_list)
-    show_raw = st.checkbox("Show raw latest record", value=False)
-    st.form_submit_button("Load")
+# Sidebar: file uploader and product selection
+with st.sidebar:
+    st.header("Data & Product Selection")
+    
+    # File uploader
+    uploaded_file = st.file_uploader(
+        "Upload CSV (optional)",
+        type="csv",
+        help="Upload a custom pricing dataset. If not provided, default dataset is used."
+    )
+    
+    # Load dataset (from uploaded file or default)
+    if uploaded_file is not None:
+        try:
+            df = load_data_from_bytes(uploaded_file.getvalue())
+            st.success("✓ Custom dataset loaded")
+        except Exception as e:
+            st.error(f"Error loading uploaded file: {e}")
+            st.markdown("*Falling back to default dataset...*")
+            try:
+                df = load_data(DATA_PATH)
+            except FileNotFoundError:
+                st.error(f"Processed data not found at {DATA_PATH}. Run preprocess.py first.")
+                st.stop()
+    else:
+        # Load default dataset
+        try:
+            df = load_data(DATA_PATH)
+        except FileNotFoundError:
+            st.error(f"Processed data not found at {DATA_PATH}. Run preprocess.py first.")
+            st.stop()
+    
+    if df.empty:
+        st.error("Loaded dataset is empty.")
+        st.stop()
+    
+    # Validate dataset has required columns
+    if not validate_dataset_streamlit(df):
+        st.stop()
+    
+    st.divider()
+    
+    # Preprocess the dataset
+    try:
+        df_processed = preprocess_for_inference(df)
+        st.success("✓ Dataset preprocessed")
+    except Exception as e:
+        st.error(f"Error preprocessing dataset: {e}")
+        st.stop()
+    
+    # Get latest row per product
+    df_latest = get_latest_row_per_product(df_processed)
+    
+    # Product selection form
+    with st.form(key="product_select_form"):
+        st.subheader("Product Selector")
+        product_list = df_latest["product_name"].dropna().unique().tolist()
+        product_list.sort()
+        selected_product = st.selectbox("Select Product", product_list)
+        show_raw = st.checkbox("Show raw latest record", value=False)
+        st.form_submit_button("Load")
 
 # -------------------------
 # Latest record for selected product
 # -------------------------
-product_rows = df[df["product_name"] == selected_product]
+product_rows = df_latest[df_latest["product_name"] == selected_product]
 if product_rows.empty:
     st.error(f"No data for product: {selected_product}")
     st.stop()
 
-latest = product_rows.sort_values("date").iloc[-1]
+latest = product_rows.iloc[0]  # Only one row per product after get_latest_row_per_product()
 
 # Optional raw display
 if show_raw:
@@ -201,7 +281,8 @@ else:
     elif status and status.startswith("Overpriced"):
         st.warning(f"Recommended Price: ${rec_price:.2f} — {status}")
     else:
-        st.info(f"Recommended Price: ${rec_price:.2f} — {status}")
+        # Use transparent markdown instead of st.info()
+        st.markdown(f"**Recommended Price:** ${rec_price:.2f} — {status}")
 
     st.write(f"Expected Profit at recommended price: ${rec_profit:.2f}")
 
