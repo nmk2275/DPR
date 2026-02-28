@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 
 # Import optimizer helpers (these will load the trained model once on import)
-from price_optimizer import recommend_price, price_status
+from price_optimizer import recommend_price, price_status, compare_pricing_strategies
 import price_optimizer
 
 # Import dataset validation
@@ -13,6 +13,10 @@ from validate_dataset import validate_dataset_streamlit
 
 # Import preprocessing utilities
 from preprocess_inference import preprocess_for_inference
+
+# Import prediction validation
+from prediction_validator import validate_prediction_features
+from feature_engineering import EXPECTED_FEATURES
 
 # -------------------------
 # Page config
@@ -152,6 +156,11 @@ if product_rows.empty:
     st.stop()
 
 latest = product_rows.iloc[0]  # Only one row per product after get_latest_row_per_product()
+
+# Extract key values (available throughout the app)
+inventory_level = latest.get("inventory_level", 250)
+max_inventory = latest.get("max_inventory", 500)
+cost = latest.get("cost", np.nan)
 
 # Optional raw display
 if show_raw:
@@ -349,6 +358,18 @@ with st.expander("🔍 Demand Calculation Breakdown"):
         }])
         
         demand_input = reorder_features(demand_input, get_feature_order(), drop_extra=True)
+        
+        # ========================================================
+        # VALIDATION BEFORE PREDICTION
+        # Assert features match training exactly
+        # ========================================================
+        is_valid, validation_msg = validate_prediction_features(
+            demand_input,
+            raise_error=True,
+            verbose=True,
+            exclude_columns=[]  # No metadata columns here
+        )
+        
         predicted_demand_value = price_optimizer.model.predict(demand_input)[0]
         
         st.markdown("---")
@@ -517,6 +538,138 @@ with st.expander("🔍 Demand Calculation Breakdown"):
         )
         
         st.plotly_chart(fig_comp, use_container_width=True)
+        
+        # PIE CHART: DEMAND COMPONENTS WEIGHTAGE
+        st.markdown("---")
+        st.markdown("#### 📊 Demand Components Weightage Breakdown")
+        
+        # Calculate positive and negative contributions
+        positive_components = {'Base Demand': Q0}
+        if popularity_effect > 0:
+            positive_components['Popularity Boost'] = popularity_effect
+        
+        negative_components = {}
+        if price_effect > 0:
+            negative_components['Price Effect'] = price_effect
+        if competitive_penalty_effect > 0:
+            negative_components['Competitor Penalty'] = competitive_penalty_effect
+        
+        # Create two-column layout for pie charts
+        col_pie1, col_pie2 = st.columns(2)
+        
+        # POSITIVE COMPONENTS PIE CHART
+        with col_pie1:
+            st.markdown("**✅ Positive Contributors:**")
+            
+            pos_labels = list(positive_components.keys())
+            pos_values = list(positive_components.values())
+            pos_total = sum(pos_values)
+            
+            fig_pie_pos = go.Figure(data=[go.Pie(
+                labels=pos_labels,
+                values=pos_values,
+                marker=dict(colors=['#2ecc71', '#27ae60'], line=dict(color='black', width=2)),
+                textinfo='label+percent+value',
+                textposition='inside',
+                texttemplate='<b>%{label}</b><br>%{percent}<br>%{value:.1f}',
+                hovertemplate='<b>%{label}</b><br>Value: %{value:.1f}<br>Percentage: %{percent}<extra></extra>',
+                hole=0.3
+            )])
+            
+            fig_pie_pos.update_layout(
+                title='Positive Demand Factors',
+                height=450,
+                font=dict(size=10),
+                showlegend=True,
+                legend=dict(x=0.0, y=-0.2)
+            )
+            
+            st.plotly_chart(fig_pie_pos, use_container_width=True)
+        
+        # NEGATIVE COMPONENTS PIE CHART
+        with col_pie2:
+            st.markdown("**❌ Negative Contributors:**")
+            
+            if negative_components:
+                neg_labels = list(negative_components.keys())
+                neg_values = list(negative_components.values())
+                neg_total = sum(neg_values)
+                
+                fig_pie_neg = go.Figure(data=[go.Pie(
+                    labels=neg_labels,
+                    values=neg_values,
+                    marker=dict(colors=['#e74c3c', '#c0392b'], line=dict(color='black', width=2)),
+                    textinfo='label+percent+value',
+                    textposition='inside',
+                    texttemplate='<b>%{label}</b><br>%{percent}<br>%{value:.1f}',
+                    hovertemplate='<b>%{label}</b><br>Value: %{value:.1f}<br>Percentage: %{percent}<extra></extra>',
+                    hole=0.3
+                )])
+                
+                fig_pie_neg.update_layout(
+                    title='Negative Demand Factors',
+                    height=450,
+                    font=dict(size=10),
+                    showlegend=True,
+                    legend=dict(x=0.0, y=-0.2)
+                )
+                
+                st.plotly_chart(fig_pie_neg, use_container_width=True)
+            else:
+                st.info("No negative factors affecting demand")
+        
+        # PIE CHART: POPULARITY COMPOSITION
+        st.markdown("---")
+        st.markdown("#### 🔥 Popularity Component Weightages")
+        
+        # Extract popularity components
+        search_trend_normalized = latest.get('search_trend', 50) / 100.0
+        review_velocity_normalized = latest.get('review_velocity', 15) / 30.0
+        social_buzz_normalized = latest.get('social_buzz', 50) / 100.0
+        
+        # Calculate weighted components
+        search_contribution = 0.40 * search_trend_normalized
+        review_contribution = 0.30 * review_velocity_normalized
+        social_contribution = 0.30 * social_buzz_normalized
+        
+        popularity_components = {
+            'Search Trend (40%)': search_contribution,
+            'Review Velocity (30%)': review_contribution,
+            'Social Buzz (30%)': social_contribution
+        }
+        
+        fig_pie_pop = go.Figure(data=[go.Pie(
+            labels=list(popularity_components.keys()),
+            values=list(popularity_components.values()),
+            marker=dict(
+                colors=['#3498db', '#9b59b6', '#f39c12'],
+                line=dict(color='black', width=2)
+            ),
+            textinfo='label+percent+value',
+            textposition='auto',
+            texttemplate='<b>%{label}</b><br>%{percent}<br>%{value:.3f}',
+            hovertemplate='<b>%{label}</b><br>Value: %{value:.3f}<br>Percentage: %{percent}<extra></extra>'
+        )])
+        
+        fig_pie_pop.update_layout(
+            title='Popularity Score Composition (Total: {:.3f})'.format(Pop),
+            height=500,
+            font=dict(size=11),
+            showlegend=True,
+            legend=dict(x=0.7, y=0.5)
+        )
+        
+        st.plotly_chart(fig_pie_pop, use_container_width=True)
+        
+        # Add interpretation
+        st.info(f"""
+        **📊 Popularity Breakdown:**
+        - **Search Trend (40%):** {search_contribution:.3f} - How often customers search for this product
+        - **Review Velocity (30%):** {review_contribution:.3f} - How many reviews are being posted
+        - **Social Buzz (30%):** {social_contribution:.3f} - Social media mentions and engagement
+        
+        **Total Popularity Score:** {Pop:.3f} (out of 1.0)
+        """)
     
     # 3. POPULARITY IMPACT VISUALIZATION - PLOTLY LINE CHART
     if st.session_state.show_popularity:
@@ -763,7 +916,223 @@ else:
         # Use transparent markdown instead of st.info()
         st.markdown(f"**Recommended Price:** ₹{rec_price * USD_TO_INR:.2f} — {status}")
 
-    st.write(f"Expected Profit at recommended price: ₹{rec_profit * USD_TO_INR:.2f}")
+    # Display profit with better formatting and clarity
+    col_profit1, col_profit2 = st.columns(2)
+    with col_profit1:
+        st.metric(
+            "💰 Expected Daily Profit",
+            f"₹{rec_profit * USD_TO_INR:,.0f}",
+            f"@ ₹{rec_price * USD_TO_INR:.0f}/unit"
+        )
+    with col_profit2:
+        # Calculate and show margin percentage
+        margin_per_unit = rec_price - latest.get("cost", 0)
+        margin_pct = (margin_per_unit / rec_price * 100) if rec_price > 0 else 0
+        st.metric(
+            "📈 Profit Margin",
+            f"{margin_pct:.1f}%",
+            f"${margin_per_unit:.2f}/unit"
+        )
+    
+    # --------- Inventory-Aware Recommendation Context ---------
+    # (inventory_level and max_inventory already defined at app startup)
+    inventory_ratio = inventory_level / max_inventory
+    
+    st.divider()
+    
+    # Display inventory metrics
+    col_inv1, col_inv2 = st.columns(2)
+    with col_inv1:
+        st.metric(
+            "📦 Inventory Level",
+            f"{inventory_level:.0f} units",
+            f"Max: {max_inventory:.0f} units"
+        )
+    with col_inv2:
+        st.metric(
+            "📊 Inventory Ratio",
+            f"{inventory_ratio:.1%}",
+            delta=None
+        )
+    
+    # Contextual warnings based on inventory levels
+    if inventory_ratio < 0.2:
+        st.warning(
+            f"""🚨 **Low Stock Alert!**
+            - Inventory is critically low ({inventory_ratio:.1%} of max capacity)
+            - Price has been increased by 8% to maximize revenue per unit
+            - Consider reordering stock soon to avoid stockouts"""
+        )
+    elif inventory_ratio > 0.8:
+        st.info(
+            f"""📈 **Overstock Situation**
+            - Inventory is excessive ({inventory_ratio:.1%} of max capacity)
+            - Price has been reduced by 8% to accelerate turnover
+            - Prioritize selling existing stock to reduce holding costs"""
+        )
+    else:
+        st.success(
+            f"""✓ **Optimal Inventory Level**
+            - Inventory at healthy level ({inventory_ratio:.1%} of capacity)
+            - Pricing recommendation balances profit and market competition
+            """
+        )
+
+st.markdown("---")
+
+# =========================================================
+# PRICING STRATEGY COMPARISON
+# =========================================================
+
+st.subheader("🎯 Advanced Pricing Strategy Comparison")
+
+# Strategy configuration with buttons
+st.markdown("**Compare pricing strategies:**")
+button_col1, button_col2, button_col3 = st.columns([1, 1, 2])
+
+with button_col1:
+    if st.button(
+        "📊 Compare All Strategies",
+        key="compare_strategies",
+        help="Run comprehensive strategy comparison",
+        use_container_width=True
+    ):
+        st.session_state.run_strategy_comparison = True
+
+with button_col2:
+    if st.button(
+        "🔄 Reset",
+        key="reset_strategies",
+        help="Clear strategy comparison results",
+        use_container_width=True
+    ):
+        st.session_state.run_strategy_comparison = False
+
+with button_col3:
+    st.info("💡 Click 'Compare All Strategies' to see pricing analysis")
+
+# Run strategy comparison if button was clicked
+if st.session_state.get('run_strategy_comparison', False):
+    try:
+        strategy_result = compare_pricing_strategies(
+            product_row=latest,
+            compare_bundle_with_product_id=10,  # Always enable bundle comparison
+            bundle_discount_pct=0.10,
+            bundle_demand_boost_pct=0.20
+        )
+        
+        # Display best strategy recommendation
+        st.divider()
+        
+        best_strat = strategy_result['best_strategy_name']
+        best_price = strategy_result['recommended_price']
+        best_demand = strategy_result['expected_demand']
+        best_profit = strategy_result['expected_profit']
+        best_margin = strategy_result['profit_margin']
+        
+        # Highlight the best strategy
+        st.success(f"✅ **BEST STRATEGY: {best_strat}**")
+        
+        # Display metrics for best strategy
+        col_bs1, col_bs2, col_bs3, col_bs4 = st.columns(4)
+        
+        with col_bs1:
+            st.metric(
+                "Recommended Price",
+                f"₹{best_price * USD_TO_INR:.2f}"
+            )
+        
+        with col_bs2:
+            st.metric(
+                "Expected Demand",
+                f"{best_demand:.0f} units"
+            )
+        
+        with col_bs3:
+            st.metric(
+                "Expected Profit",
+                f"₹{best_profit * USD_TO_INR:,.0f}"
+            )
+        
+        with col_bs4:
+            st.metric(
+                "Profit Margin",
+                f"{best_margin:.1f}%"
+            )
+        
+        # Display explanation
+        st.markdown(f"**Why this strategy?** {strategy_result['explanation']}")
+        
+        # Create comparison table
+        st.divider()
+        st.subheader("📊 Strategy Comparison Table")
+        
+        # Build comparison dataframe
+        comparison_data = []
+        
+        for strategy_name, strategy_data in strategy_result['all_strategies'].items():
+            if strategy_name == 'base':
+                display_name = "BASE (ML Optimized)"
+                discount_info = "—"
+            elif strategy_name == 'discount':
+                discount_rate = strategy_data.get('discount_rate', 0)
+                display_name = f"DISCOUNT ({int(discount_rate*100)}% off)"
+                discount_info = f"{int(discount_rate*100)}%"
+            elif strategy_name == 'bundle':
+                display_name = "BUNDLE"
+                discount_info = "Bundle"
+            else:
+                display_name = strategy_name.upper()
+                discount_info = "—"
+            
+            is_best = "✅ BEST" if strategy_name == best_strat.lower() else ""
+            
+            comparison_data.append({
+                "Strategy": f"{display_name} {is_best}",
+                "Price (₹)": f"{strategy_data['price'] * USD_TO_INR:.2f}",
+                "Demand (units)": f"{strategy_data['demand']:.0f}",
+                "Profit (₹)": f"{strategy_data['profit'] * USD_TO_INR:,.0f}",
+                "Margin (%)": f"{strategy_data['margin']:.1f}%"
+            })
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+        
+        # Detailed insights
+        st.divider()
+        st.subheader("💡 Strategy Insights")
+        
+        # Calculate insights
+        base_strategy = strategy_result['all_strategies'].get('base', {})
+        discount_strategy = strategy_result['all_strategies'].get('discount', {})
+        
+        insights_col1, insights_col2 = st.columns(2)
+        
+        with insights_col1:
+            st.write("**Profit Comparison vs Base:**")
+            if discount_strategy:
+                discount_vs_base = discount_strategy['profit'] - base_strategy.get('profit', 0)
+                discount_pct = (discount_vs_base / base_strategy.get('profit', 1) * 100) if base_strategy.get('profit', 0) > 0 else 0
+                
+                if discount_vs_base > 0:
+                    st.success(f"Discount: +₹{discount_vs_base * USD_TO_INR:,.0f} ({discount_pct:+.1f}%)")
+                else:
+                    st.warning(f"Discount: ₹{discount_vs_base * USD_TO_INR:,.0f} ({discount_pct:+.1f}%)")
+        
+        with insights_col2:
+            st.write("**Volume Impact:**")
+            if discount_strategy:
+                discount_demand = discount_strategy.get('demand', 0)
+                base_demand = base_strategy.get('demand', 0)
+                volume_increase = discount_demand - base_demand
+                volume_pct = (volume_increase / base_demand * 100) if base_demand > 0 else 0
+                
+                st.info(f"Discount increases volume by {volume_increase:.0f} units ({volume_pct:+.1f}%)")
+    
+    except Exception as e:
+        st.error(f"Strategy comparison failed: {str(e)}")
+        import traceback
+        st.write(traceback.format_exc())
 
 st.markdown("---")
 
@@ -870,20 +1239,80 @@ for name in model_features:
 
 sim_inputs = pd.DataFrame(data)
 
+# ========================================================
+# VALIDATION BEFORE PREDICTION
+# Assert features match training exactly
+# ========================================================
+is_valid, validation_msg = validate_prediction_features(
+    sim_inputs,
+    raise_error=True,
+    verbose=False,  # Suppress for simulation (many predictions)
+    exclude_columns=[]  # No metadata columns here
+)
+
 forecasted_demand = model.predict(sim_inputs)
-predicted_profit = (price_range - cost_val) * forecasted_demand
+
+# Apply inventory constraint to profit calculation
+# Actual sales cannot exceed available inventory
+inventory_level = latest.get("inventory_level", float('inf'))
+actual_sales = np.minimum(forecasted_demand, inventory_level)
+
+# Profit uses actual sales (constrained by inventory)
+predicted_profit = (price_range - cost_val) * actual_sales
 
 # Store results in DataFrame
 sim_results = pd.DataFrame({
     "price": price_range,
     "forecasted_demand": forecasted_demand,
+    "actual_sales": actual_sales,
     "predicted_profit": predicted_profit,
+    "inventory_constraint": inventory_level,
 })
 
 # -------------------------
 # Interactive Price Slider
 # -------------------------
 st.subheader("Interactive Price Adjustment")
+
+# --------- Inventory Scenario Selector ---------
+st.markdown("**📦 Inventory Scenario Analysis:**")
+col_scenario1, col_scenario2 = st.columns([2, 1])
+
+with col_scenario1:
+    inventory_scenario = st.selectbox(
+        "Select inventory scenario:",
+        options=["Normal Inventory", "Low Inventory (Scarce)", "High Inventory (Overstock)"],
+        help="Analyze how optimal pricing changes under different inventory levels"
+    )
+
+# Map scenario to inventory ratio
+scenario_to_ratio = {
+    "Normal Inventory": inventory_level / max_inventory,
+    "Low Inventory (Scarce)": 0.1,
+    "High Inventory (Overstock)": 0.9,
+}
+scenario_inventory_ratio = scenario_to_ratio[inventory_scenario]
+scenario_inventory_level = scenario_inventory_ratio * max_inventory
+
+# Display scenario inventory info
+with col_scenario2:
+    st.metric(
+        "Scenario Inventory",
+        f"{scenario_inventory_ratio:.0%}",
+        f"({scenario_inventory_level:.0f} units)"
+    )
+
+# Recalculate simulation with scenario inventory level
+scenario_actual_sales = np.minimum(forecasted_demand, scenario_inventory_level)
+scenario_predicted_profit = (price_range - cost_val) * scenario_actual_sales
+
+# Store scenario results
+sim_results_scenario = pd.DataFrame({
+    "price": price_range,
+    "forecasted_demand": forecasted_demand,
+    "actual_sales": scenario_actual_sales,
+    "predicted_profit": scenario_predicted_profit,
+})
 
 # Initialize session state for slider if not present
 if "selected_price" not in st.session_state:
@@ -913,8 +1342,23 @@ for name in model_features:
         selected_features[name] = base_features.get(name, 0.0)
 
 selected_input_df = pd.DataFrame([selected_features])
+
+# ========================================================
+# VALIDATION BEFORE PREDICTION
+# Assert features match training exactly
+# ========================================================
+is_valid, validation_msg = validate_prediction_features(
+    selected_input_df,
+    raise_error=True,
+    verbose=False,
+    exclude_columns=[]  # No metadata columns here
+)
+
 selected_demand = model.predict(selected_input_df)[0]
-selected_profit = (selected_price_usd - cost_val) * selected_demand
+
+# Apply inventory constraint to selected price profit
+selected_actual_sales = min(selected_demand, inventory_level)
+selected_profit = (selected_price_usd - cost_val) * selected_actual_sales
 
 # Display live metrics for selected price
 col_m1, col_m2, col_m3 = st.columns(3)
@@ -931,7 +1375,7 @@ with col_m2:
     )
 with col_m3:
     st.metric(
-        "Predicted Profit",
+        "Actual Profit (Inventory-Constrained)",
         f"₹{selected_profit * USD_TO_INR:.2f}"
     )
 
@@ -1030,17 +1474,43 @@ with col_b:
     
     fig_profit = go.Figure()
     
-    # Add profit curve
+    # Add base profit curve (current inventory scenario)
     fig_profit.add_trace(go.Scatter(
         x=sim_results["price"] * USD_TO_INR,
         y=sim_results["predicted_profit"] * USD_TO_INR,
         mode='lines',
-        name='Profit Curve',
+        name='Current Inventory',
         line=dict(color='#ff7f0e', width=3),
         fill='tozeroy',
-        fillcolor='rgba(255, 127, 14, 0.2)',
+        fillcolor='rgba(255, 127, 14, 0.15)',
         hovertemplate='<b>Price: ₹%{x:.2f}</b><br>Profit: ₹%{y:,.0f}<extra></extra>'
     ))
+    
+    # Add scenario profit curve (only if different from current)
+    if inventory_scenario != "Normal Inventory":
+        fig_profit.add_trace(go.Scatter(
+            x=sim_results_scenario["price"] * USD_TO_INR,
+            y=sim_results_scenario["predicted_profit"] * USD_TO_INR,
+            mode='lines',
+            name=inventory_scenario,
+            line=dict(color='#7cb342', width=2, dash='dash'),
+            fill=None,
+            hovertemplate='<b>Price: ₹%{x:.2f}</b><br>Profit (Scenario): ₹%{y:,.0f}<extra></extra>'
+        ))
+        
+        # Highlight the optimal profit point for the scenario
+        scenario_optimal_idx = np.argmax(sim_results_scenario["predicted_profit"])
+        scenario_optimal_price = sim_results_scenario["price"].iloc[scenario_optimal_idx]
+        scenario_optimal_profit = sim_results_scenario["predicted_profit"].iloc[scenario_optimal_idx]
+        
+        fig_profit.add_trace(go.Scatter(
+            x=[scenario_optimal_price * USD_TO_INR],
+            y=[scenario_optimal_profit * USD_TO_INR],
+            mode='markers',
+            name='Scenario Optimal',
+            marker=dict(size=12, color='#7cb342', symbol='diamond', line=dict(color='#558b2f', width=2)),
+            hovertemplate='<b>Scenario Optimal: ₹%{x:.2f}</b><br>Profit: ₹%{y:,.0f}<extra></extra>'
+        ))
     
     # Add selected price marker
     fig_profit.add_trace(go.Scatter(
@@ -1105,6 +1575,601 @@ with col_b:
     
     st.plotly_chart(fig_profit, use_container_width=True)
 
+# Display inventory constraint information
+st.markdown("---")
+
+# Show scenario comparison if analyzing different inventory levels
+if inventory_scenario != "Normal Inventory":
+    st.subheader("📊 Inventory Scenario Comparison")
+    
+    # Calculate optimal prices for current and scenario
+    current_optimal_idx = np.argmax(sim_results["predicted_profit"])
+    current_optimal_price = sim_results["price"].iloc[current_optimal_idx]
+    current_max_profit = sim_results["predicted_profit"].iloc[current_optimal_idx]
+    
+    scenario_optimal_idx = np.argmax(sim_results_scenario["predicted_profit"])
+    scenario_optimal_price = sim_results_scenario["price"].iloc[scenario_optimal_idx]
+    scenario_max_profit = sim_results_scenario["predicted_profit"].iloc[scenario_optimal_idx]
+    
+    # Display comparison metrics
+    col_comp1, col_comp2, col_comp3 = st.columns(3)
+    
+    with col_comp1:
+        st.metric(
+            "Current Scenario Price",
+            f"₹{current_optimal_price * USD_TO_INR:.2f}",
+            f"Profit: ₹{current_max_profit * USD_TO_INR:,.0f}"
+        )
+    
+    with col_comp2:
+        st.metric(
+            f"{inventory_scenario} Price",
+            f"₹{scenario_optimal_price * USD_TO_INR:.2f}",
+            f"Profit: ₹{scenario_max_profit * USD_TO_INR:,.0f}"
+        )
+    
+    with col_comp3:
+        price_diff_pct = ((scenario_optimal_price - current_optimal_price) / current_optimal_price * 100)
+        profit_diff_pct = ((scenario_max_profit - current_max_profit) / current_max_profit * 100)
+        
+        st.metric(
+            "Price Change",
+            f"{price_diff_pct:+.1f}%",
+            f"Profit Impact: {profit_diff_pct:+.1f}%"
+        )
+    
+    # Add insights
+    if inventory_scenario == "Low Inventory (Scarce)":
+        st.success("""
+        **💡 Insights for Low Inventory:**
+        - Scarcity allows for higher pricing
+        - Optimal price increased to maximize per-unit revenue
+        - Lower volume but higher margins compensate
+        - This pricing also triggers the 8% scarcity markup in recommendations
+        """)
+    elif inventory_scenario == "High Inventory (Overstock)":
+        st.warning("""
+        **� Insights for High Inventory:**
+        - Excess stock requires aggressive discounting
+        - Lower prices accelerate turnover and reduce holding costs
+        - Higher volume partially offsets lower margins
+        - This pricing aligns with the 8% clearance discount in recommendations
+        """)
+
+st.info(f"""
+**�📦 Inventory Constraint Applied:**
+- Current Inventory Level: {inventory_level:.0f} units ({inventory_level/max_inventory:.0%} of capacity)
+- Profit calculations are constrained by available inventory
+- Actual sales = min(forecasted_demand, inventory_level)
+- Demand shows predicted demand without constraint
+- Profit shows revenue achievable with current inventory
+""")
+
+st.markdown("---")
+
+# =========================================================
+# PRICE CALCULATION BREAKDOWN
+# =========================================================
+
+with st.expander("💰 Price Calculation & Optimization Formula"):
+    st.markdown("### Price Optimization Formula")
+    
+    st.markdown("""
+    The optimal price is computed using a **profit maximization approach** with Monte Carlo simulation.
+    The algorithm tests multiple price points and selects the one that maximizes expected profit.
+    """)
+    
+    # Display the profit formula
+    st.latex(r"""
+    \text{Profit}(P) = (P - C) \cdot Q(P) - \text{Penalties}
+    """)
+    
+    st.markdown("""
+    **Where:**
+    - **P**: Price (what we're optimizing)
+    - **C**: Unit cost (fixed input)
+    - **Q(P)**: Demand as a function of price (from demand model)
+    - **Penalties**: Various adjustments for competition, volatility, etc.
+    
+    **Optimization Process:**
+    1. Generate 100+ candidate prices (typically ±20% around current price)
+    2. For each candidate price, run Monte Carlo simulations (500+ iterations)
+    3. Simulate demand including stochastic noise/uncertainty
+    4. Calculate profit = (price - cost) × simulated_demand
+    5. Apply competitive penalties if price > competitor price
+    6. Apply inventory adjustments based on stock levels
+    7. Select price with maximum expected profit
+    """)
+    
+    st.markdown("### Step-by-Step Price Optimization Calculation")
+    
+    # Use actual values from the product
+    current_price = latest.get("price", 0.0)
+    cost = latest.get("cost", 0.0)
+    competitor_price = latest.get("competitor_price", 0.0)
+    inventory_level = latest.get("inventory_level", 250)
+    max_inventory = latest.get("max_inventory", 500)
+    current_demand = latest.get("historical_demand", 100)
+    
+    st.markdown(f"**For Product:** {selected_product}")
+    
+    # Display input parameters
+    col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+    col_p1.metric("Current Price", f"₹{current_price * USD_TO_INR:.2f}")
+    col_p2.metric("Unit Cost", f"₹{cost * USD_TO_INR:.2f}")
+    col_p3.metric("Competitor Price", f"₹{competitor_price * USD_TO_INR:.2f}")
+    col_p4.metric("Current Demand", f"{current_demand:.0f} units")
+    
+    st.markdown("---")
+    st.markdown("### Profit Calculation at Different Price Points")
+    
+    # Calculate profit at several key price points
+    price_points = [
+        ("Current Price", current_price),
+        ("10% Discount", current_price * 0.9),
+        ("5% Discount", current_price * 0.95),
+        ("Competitor Price", competitor_price),
+        ("5% Premium", current_price * 1.05),
+        ("10% Premium", current_price * 1.10),
+    ]
+    
+    profit_analysis = []
+    
+    for price_label, test_price in price_points:
+        # Prepare features for demand prediction
+        test_features = {
+            name: (test_price if name == "price" else 
+                   test_price - competitor_price if name == "price_gap" else 
+                   base_features.get(name, 0.0))
+            for name in model_features
+        }
+        
+        test_df = pd.DataFrame([test_features])
+        
+        try:
+            # Predict demand at this price
+            predicted_demand = model.predict(test_df)[0]
+            
+            # Calculate profit
+            margin = test_price - cost
+            margin_pct = (margin / test_price * 100) if test_price > 0 else 0
+            profit = margin * predicted_demand
+            
+            profit_analysis.append({
+                'Price Point': price_label,
+                'Price (₹)': f"{test_price * USD_TO_INR:.2f}",
+                'Unit Margin (₹)': f"{margin * USD_TO_INR:.2f}",
+                'Margin %': f"{margin_pct:.1f}%",
+                'Predicted Demand': f"{predicted_demand:.0f} units",
+                'Total Profit (₹)': f"{profit * USD_TO_INR:,.0f}"
+            })
+        except:
+            pass
+    
+    # Display profit analysis table
+    profit_df = pd.DataFrame(profit_analysis)
+    st.markdown("**Profit at Different Price Points:**")
+    st.dataframe(profit_df, use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    st.markdown("### Competitive Pricing Analysis")
+    
+    # Calculate price gaps and competitive metrics
+    price_gap = current_price - competitor_price
+    is_premium = price_gap > 0
+    gap_pct = (price_gap / competitor_price * 100) if competitor_price > 0 else 0
+    
+    col_comp1, col_comp2, col_comp3 = st.columns(3)
+    
+    with col_comp1:
+        st.metric(
+            "Price Gap (vs Competitor)",
+            f"₹{price_gap * USD_TO_INR:.2f}",
+            f"{gap_pct:+.1f}%"
+        )
+    
+    with col_comp2:
+        position = "Premium" if is_premium else "Discount"
+        st.metric(
+            "Competitive Position",
+            position,
+            f"{abs(gap_pct):.1f}% {'above' if is_premium else 'below'} market"
+        )
+    
+    with col_comp3:
+        # Calculate elasticity effect
+        elasticity_factor = 1.3 if "mid" in selected_product.lower() else 0.7 if "Apple" in selected_product or "Sony" in selected_product else 1.0
+        st.metric(
+            "Price Elasticity Factor",
+            f"{elasticity_factor:.1f}",
+            "High sensitivity" if elasticity_factor > 1.0 else "Low sensitivity"
+        )
+    
+    st.markdown("---")
+    st.markdown("### Inventory Impact on Price")
+    
+    inventory_ratio = inventory_level / max_inventory
+    
+    # Determine inventory adjustment
+    if inventory_ratio < 0.2:
+        inventory_adjustment = 0.08  # 8% markup for scarcity
+        inventory_status = "🚨 Low Stock - Increase Price"
+        adjustment_reason = "Scarcity allows premium pricing to maximize revenue"
+    elif inventory_ratio > 0.8:
+        inventory_adjustment = -0.08  # 8% discount for overstock
+        inventory_status = "📈 Overstock - Decrease Price"
+        adjustment_reason = "Excess inventory requires aggressive discounting for faster turnover"
+    else:
+        inventory_adjustment = 0.0
+        inventory_status = "✓ Balanced Inventory - Standard Pricing"
+        adjustment_reason = "Inventory at healthy level, no special adjustments needed"
+    
+    col_inv1, col_inv2, col_inv3 = st.columns(3)
+    
+    with col_inv1:
+        st.metric(
+            "Inventory Level",
+            f"{inventory_ratio:.0%}",
+            f"{inventory_level:.0f} / {max_inventory:.0f} units"
+        )
+    
+    with col_inv2:
+        st.metric(
+            "Inventory Status",
+            inventory_status
+        )
+    
+    with col_inv3:
+        st.metric(
+            "Price Adjustment",
+            f"{inventory_adjustment:+.1%}",
+            adjustment_reason
+        )
+    
+    st.markdown("---")
+    st.markdown("### Margin vs Volume Trade-off")
+    
+    # Show margin and volume at different prices
+    st.markdown("""
+    **Key Insight:** Higher prices increase per-unit margin but reduce demand volume.
+    The optimizer finds the sweet spot that maximizes total profit.
+    """)
+    
+    # Create interactive visualization
+    test_prices = np.linspace(current_price * 0.8, current_price * 1.2, 30)
+    margin_analysis = []
+    
+    for test_p in test_prices:
+        test_feat = {
+            name: (test_p if name == "price" else 
+                   test_p - competitor_price if name == "price_gap" else 
+                   base_features.get(name, 0.0))
+            for name in model_features
+        }
+        
+        try:
+            test_d = model.predict(pd.DataFrame([test_feat]))[0]
+            test_margin = test_p - cost
+            margin_analysis.append({
+                'price': test_p,
+                'margin': test_margin,
+                'demand': test_d,
+                'profit': test_margin * test_d
+            })
+        except:
+            pass
+    
+    if margin_analysis:
+        margin_df = pd.DataFrame(margin_analysis)
+        
+        # Create Plotly figure with dual y-axes
+        fig_margin = go.Figure()
+        
+        # Add margin curve (left y-axis)
+        fig_margin.add_trace(go.Scatter(
+            x=margin_df['price'] * USD_TO_INR,
+            y=margin_df['margin'] * USD_TO_INR,
+            mode='lines',
+            name='Unit Margin',
+            line=dict(color='#2ecc71', width=3),
+            yaxis='y1',
+            hovertemplate='<b>Price: ₹%{x:.2f}</b><br>Unit Margin: ₹%{y:.2f}<extra></extra>'
+        ))
+        
+        # Add demand curve (right y-axis)
+        fig_margin.add_trace(go.Scatter(
+            x=margin_df['price'] * USD_TO_INR,
+            y=margin_df['demand'],
+            mode='lines',
+            name='Demand',
+            line=dict(color='#3498db', width=3),
+            yaxis='y2',
+            hovertemplate='<b>Price: ₹%{x:.2f}</b><br>Demand: %{y:.0f} units<extra></extra>'
+        ))
+        
+        # Add current price line
+        fig_margin.add_vline(
+            x=current_price * USD_TO_INR,
+            line_dash="dash",
+            line_color="gray",
+            line_width=2,
+            annotation_text=f"Current: ₹{current_price * USD_TO_INR:.2f}",
+            annotation_position="top left",
+            annotation_font_size=10
+        )
+        
+        # Update layout with dual y-axes
+        fig_margin.update_layout(
+            title='Margin vs Volume Trade-off',
+            xaxis_title='Price (₹)',
+            yaxis=dict(
+                title='<b>Unit Margin (₹)</b>',
+                title_font=dict(color='#2ecc71'),
+                tickfont=dict(color='#2ecc71')
+            ),
+            yaxis2=dict(
+                title='<b>Predicted Demand (units)</b>',
+                title_font=dict(color='#3498db'),
+                tickfont=dict(color='#3498db'),
+                overlaying='y',
+                side='right'
+            ),
+            hovermode='x unified',
+            template='plotly_white',
+            height=500,
+            font=dict(size=11),
+            showlegend=True,
+            legend=dict(x=0.02, y=0.98)
+        )
+        
+        st.plotly_chart(fig_margin, use_container_width=True)
+        
+        # PIE CHART: PRICE OPTIMIZATION REWARD FUNCTION WEIGHTAGES
+        st.markdown("---")
+        st.markdown("#### 🎯 Price Optimization Reward Function Weightages")
+        
+        st.markdown("""
+        The optimizer uses a **reward function** that balances multiple objectives:
+        - Maximize profit while considering risk, competition, and customer trust
+        - Each component has a specific weightage in the final optimization score
+        """)
+        
+        # Calculate reward function components
+        # Simulated values for current price
+        test_feat_current = {
+            name: (current_price if name == "price" else 
+                   current_price - competitor_price if name == "price_gap" else 
+                   base_features.get(name, 0.0))
+            for name in model_features
+        }
+        
+        try:
+            demand_current = model.predict(pd.DataFrame([test_feat_current]))[0]
+            base_profit = (current_price - cost) * demand_current
+            
+            # Define reward components with weightages
+            volatility_penalty = 0.1 * (demand_current * 0.15)  # 10% volatility penalty
+            competitive_penalty = 0.25 * max(0, current_price - competitor_price)  # 25% competitive
+            uncertainty_penalty = 0.1 * (demand_current * 0.15)  # 10% uncertainty
+            trust_penalty = 0.15 * abs(current_price - latest.get("price", current_price)) / current_price  # 15% trust
+            anchor_penalty = 0.15 * abs(current_price - competitor_price) / current_price  # 15% anchor
+            inventory_bonus = 0.2 * (inventory_level / max_inventory) * base_profit  # 20% inventory
+            turnover_bonus = 0.1 * (demand_current / 100)  # 10% turnover
+            
+            reward_components = {
+                'Base Profit': max(0.1, base_profit),  # Avoid zero for visualization
+                'Volatility Penalty': volatility_penalty,
+                'Competitive Penalty': competitive_penalty,
+                'Uncertainty Penalty': uncertainty_penalty,
+                'Trust Penalty': trust_penalty,
+                'Anchor Penalty': anchor_penalty,
+                'Inventory Bonus': inventory_bonus,
+                'Turnover Bonus': turnover_bonus
+            }
+            
+            # Create two pie charts: Positive and Negative
+            col_reward1, col_reward2 = st.columns(2)
+            
+            # POSITIVE REWARDS
+            with col_reward1:
+                st.markdown("**✅ Positive Reward Factors:**")
+                
+                positive_rewards = {
+                    'Base Profit (Primary)': reward_components['Base Profit'],
+                    'Inventory Bonus (+20%)': reward_components['Inventory Bonus'],
+                    'Turnover Bonus (+10%)': reward_components['Turnover Bonus']
+                }
+                
+                fig_pie_reward_pos = go.Figure(data=[go.Pie(
+                    labels=list(positive_rewards.keys()),
+                    values=list(positive_rewards.values()),
+                    marker=dict(
+                        colors=['#2ecc71', '#27ae60', '#229954'],
+                        line=dict(color='black', width=2)
+                    ),
+                    textinfo='label+percent',
+                    textposition='inside',
+                    texttemplate='<b>%{label}</b><br>%{percent}',
+                    hovertemplate='<b>%{label}</b><br>Value: %{value:.2f}<br>Percentage: %{percent}<extra></extra>',
+                    hole=0.3
+                )])
+                
+                fig_pie_reward_pos.update_layout(
+                    title='Positive Reward Components',
+                    height=450,
+                    font=dict(size=9),
+                    showlegend=True,
+                    legend=dict(x=0.0, y=-0.15, font=dict(size=9))
+                )
+                
+                st.plotly_chart(fig_pie_reward_pos, use_container_width=True)
+            
+            # NEGATIVE PENALTIES
+            with col_reward2:
+                st.markdown("**❌ Negative Penalty Factors:**")
+                
+                negative_penalties = {
+                    'Competitive Penalty (-25%)': reward_components['Competitive Penalty'],
+                    'Trust Penalty (-15%)': reward_components['Trust Penalty'],
+                    'Anchor Penalty (-15%)': reward_components['Anchor Penalty'],
+                    'Volatility Penalty (-10%)': reward_components['Volatility Penalty'],
+                    'Uncertainty Penalty (-10%)': reward_components['Uncertainty Penalty']
+                }
+                
+                fig_pie_reward_neg = go.Figure(data=[go.Pie(
+                    labels=list(negative_penalties.keys()),
+                    values=list(negative_penalties.values()),
+                    marker=dict(
+                        colors=['#e74c3c', '#c0392b', '#a93226', '#922b21', '#78281f'],
+                        line=dict(color='black', width=2)
+                    ),
+                    textinfo='label+percent',
+                    textposition='inside',
+                    texttemplate='<b>%{label}</b><br>%{percent}',
+                    hovertemplate='<b>%{label}</b><br>Value: %{value:.2f}<br>Percentage: %{percent}<extra></extra>',
+                    hole=0.3
+                )])
+                
+                fig_pie_reward_neg.update_layout(
+                    title='Negative Penalty Components',
+                    height=450,
+                    font=dict(size=9),
+                    showlegend=True,
+                    legend=dict(x=0.0, y=-0.15, font=dict(size=9))
+                )
+                
+                st.plotly_chart(fig_pie_reward_neg, use_container_width=True)
+            
+            # OVERALL WEIGHTAGE SUMMARY TABLE
+            st.markdown("---")
+            st.markdown("#### 📊 Reward Function Component Weightages")
+            
+            weightage_summary = pd.DataFrame({
+                'Component': [
+                    'Base Profit (1.0x)',
+                    'Inventory Bonus',
+                    'Turnover Bonus',
+                    'Competitive Penalty',
+                    'Trust Penalty',
+                    'Anchor Penalty',
+                    'Volatility Penalty',
+                    'Uncertainty Penalty'
+                ],
+                'Weightage': [
+                    '100% (Primary)',
+                    '+20%',
+                    '+10%',
+                    '-25%',
+                    '-15%',
+                    '-15%',
+                    '-10%',
+                    '-10%'
+                ],
+                'Direction': [
+                    '⬆️ Increase',
+                    '⬆️ Increase',
+                    '⬆️ Increase',
+                    '⬇️ Decrease',
+                    '⬇️ Decrease',
+                    '⬇️ Decrease',
+                    '⬇️ Decrease',
+                    '⬇️ Decrease'
+                ],
+                'Purpose': [
+                    'Maximize revenue',
+                    'Incentivize inventory clearance',
+                    'Encourage volume sales',
+                    'Avoid competitor pricing wars',
+                    'Minimize price volatility',
+                    'Stay anchored to market',
+                    'Avoid demand uncertainty',
+                    'Reduce risk'
+                ]
+            })
+            
+            st.dataframe(weightage_summary, use_container_width=True, hide_index=True)
+            
+        except Exception as e:
+            st.warning(f"Could not calculate reward components: {str(e)}")
+    
+    st.markdown("---")
+    st.markdown("### Monte Carlo Simulation for Profit Uncertainty")
+    
+    st.markdown("""
+    The optimizer uses Monte Carlo simulation to account for demand uncertainty:
+    - Generates 500+ random demand scenarios based on predicted demand ± uncertainty
+    - Calculates profit for each scenario
+    - Uses mean profit as the optimization criterion
+    - This reduces the risk of extreme outcomes
+    """)
+    
+    # Simulate profit distribution at current and optimal prices
+    if rec_price is not None:
+        st.markdown(f"**Comparing Profit Distributions:**")
+        
+        # Simulate at current price
+        current_feat = {
+            name: (current_price if name == "price" else 
+                   current_price - competitor_price if name == "price_gap" else 
+                   base_features.get(name, 0.0))
+            for name in model_features
+        }
+        current_base_demand = model.predict(pd.DataFrame([current_feat]))[0]
+        current_profits = (current_price - cost) * np.random.normal(current_base_demand, current_base_demand * 0.15, 5000)
+        
+        # Simulate at optimal price
+        optimal_feat = {
+            name: (rec_price if name == "price" else 
+                   rec_price - competitor_price if name == "price_gap" else 
+                   base_features.get(name, 0.0))
+            for name in model_features
+        }
+        optimal_base_demand = model.predict(pd.DataFrame([optimal_feat]))[0]
+        optimal_profits = (rec_price - cost) * np.random.normal(optimal_base_demand, optimal_base_demand * 0.15, 5000)
+        
+        # Create comparison boxplot
+        fig_box = go.Figure()
+        
+        fig_box.add_trace(go.Box(
+            y=current_profits * USD_TO_INR,
+            name=f'Current Price<br>₹{current_price * USD_TO_INR:.2f}',
+            boxmean='sd',
+            marker_color='#ff9800'
+        ))
+        
+        fig_box.add_trace(go.Box(
+            y=optimal_profits * USD_TO_INR,
+            name=f'Optimal Price<br>₹{rec_price * USD_TO_INR:.2f}',
+            boxmean='sd',
+            marker_color='#2ecc71'
+        ))
+        
+        fig_box.update_layout(
+            title='Profit Distribution: Current vs Optimal Price',
+            yaxis_title='Profit (₹)',
+            template='plotly_white',
+            height=450,
+            font=dict(size=11),
+            hovermode='y unified'
+        )
+        
+        st.plotly_chart(fig_box, use_container_width=True)
+        
+        # Display statistics
+        col_stat1, col_stat2 = st.columns(2)
+        
+        with col_stat1:
+            st.write("**Current Price Profit Statistics:**")
+            st.metric("Mean Profit", f"₹{np.mean(current_profits) * USD_TO_INR:,.0f}")
+            st.metric("Std Dev", f"₹{np.std(current_profits) * USD_TO_INR:,.0f}")
+            st.metric("5th Percentile", f"₹{np.percentile(current_profits, 5) * USD_TO_INR:,.0f}")
+        
+        with col_stat2:
+            st.write("**Optimal Price Profit Statistics:**")
+            st.metric("Mean Profit", f"₹{np.mean(optimal_profits) * USD_TO_INR:,.0f}")
+            st.metric("Std Dev", f"₹{np.std(optimal_profits) * USD_TO_INR:,.0f}")
+            st.metric("5th Percentile", f"₹{np.percentile(optimal_profits, 5) * USD_TO_INR:,.0f}")
+
 st.markdown("---")
 
 # -------------------------
@@ -1120,6 +2185,18 @@ if rec_price is not None:
                 base_features.get(name, 0.0))
         for name in model_features
     }])
+    
+    # ========================================================
+    # VALIDATION BEFORE PREDICTION
+    # Assert features match training exactly
+    # ========================================================
+    is_valid, validation_msg = validate_prediction_features(
+        optimal_price_input,
+        raise_error=True,
+        verbose=False,
+        exclude_columns=[]  # No metadata columns here
+    )
+    
     predicted_demand_at_optimal = model.predict(optimal_price_input)[0]
     
     # Simulate rolling sales update with exponential smoothing

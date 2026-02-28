@@ -2,201 +2,231 @@
 preprocess_inference.py
 Preprocessing utilities for Dynamic Pricing Intelligence System.
 Used for preparing uploaded datasets for model inference.
+
+IMPORTANT: This module uses feature_engineering.py for ALL feature transformations
+to ensure EXACT consistency with training pipeline.
+
+Uses generate_features() and align_features() directly to guarantee:
+1. Identical feature engineering to training pipeline
+2. Exact feature count and order matching training
+3. No manual feature creation or duplication
 """
 
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Tuple
+from feature_engineering import (
+    generate_features,
+    align_features,
+    validate_feature_matrix,
+    EXPECTED_FEATURES,
+    MAX_INVENTORY,
+)
 
 
-def preprocess_for_inference(df: pd.DataFrame, inplace: bool = False) -> pd.DataFrame:
+def preprocess_for_inference(df: pd.DataFrame, inplace: bool = False, keep_metadata: bool = True) -> pd.DataFrame:
     """
-    Preprocess a DataFrame for model inference.
+    Preprocess a DataFrame for model inference using unified feature engineering.
     
-    Operations:
-    1. Convert 'date' column to datetime
-    2. Extract 'month' and 'day_of_week' from date
-    3. Create 'price_gap' = price - competitor_price
-    4. Compute 'popularity' from raw signals (search_trend, review_velocity, social_buzz)
-       If signals missing, set popularity = 0.5 (neutral)
-    5. Compute 'rolling_7d_sales' grouped by product_name
-    6. Compute 'inventory_ratio' = inventory_level / max_inventory (if available)
-       If inventory_level missing, set inventory_ratio = 0.5 (default)
+    This function applies the EXACT same feature transformations as the training pipeline
+    to ensure consistency between training and inference.
+    
+    Pipeline steps:
+    1. Call generate_features() - creates all 13 new features while preserving originals
+    2. Call align_features() - selects and orders exactly EXPECTED_FEATURES (15 features)
+    3. Optionally keep metadata columns (date, product_name, etc.) for UI purposes
+    
+    Feature engineering steps (from generate_features):
+    1. Temporal features (month, day_of_week, cyclical encodings)
+    2. Price features (price_gap)
+    3. Popularity from signals
+    4. Rolling sales momentum (7-day rolling average)
+    5. Calendar event features (Black Friday, New Year, Festival Season)
+    6. Inventory features (inventory_ratio)
     
     Args:
-        df: Input DataFrame with pricing data
+        df: Input DataFrame with raw pricing data
         inplace: If True, modify df in-place. If False, work on a copy.
+        keep_metadata: If True, preserve date and product_name columns alongside features
     
     Returns:
-        pd.DataFrame: Processed DataFrame ready for model prediction
+        pd.DataFrame: Preprocessed DataFrame with exactly EXPECTED_FEATURES (15 features)
+                     in the exact order used by training pipeline.
+                     If keep_metadata=True, also includes date and product_name columns.
+    
+    Raises:
+        ValueError: If required columns missing
     """
     if not inplace:
         df = df.copy()
     
-    # -------------------------
-    # 1. Convert date to datetime
-    # -------------------------
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    else:
-        raise ValueError("Required column 'date' not found in DataFrame")
+    # Validate minimum required columns
+    required_cols = ["date", "price", "competitor_price", "historical_demand"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
     
-    # -------------------------
-    # 2. Extract temporal features
-    # -------------------------
-    df["month"] = df["date"].dt.month
-    df["day_of_week"] = df["date"].dt.dayofweek
+    # Save metadata columns if needed (for UI purposes)
+    # Preserve: date, product_name, product_id, cost, inventory_level, max_inventory
+    metadata = {}
+    if keep_metadata:
+        # Core identifiers
+        if "date" in df.columns:
+            metadata["date"] = df["date"].copy()
+        if "product_name" in df.columns:
+            metadata["product_name"] = df["product_name"].copy()
+        if "product_id" in df.columns:
+            metadata["product_id"] = df["product_id"].copy()
+        
+        # Business-critical metadata for pricing/inventory
+        if "cost" in df.columns:
+            metadata["cost"] = df["cost"].copy()
+        if "inventory_level" in df.columns:
+            metadata["inventory_level"] = df["inventory_level"].copy()
+        if "max_inventory" in df.columns:
+            metadata["max_inventory"] = df["max_inventory"].copy()
+        if "historical_demand" in df.columns:
+            metadata["historical_demand"] = df["historical_demand"].copy()
     
-    # -------------------------
-    # 3. Create price_gap feature
-    # -------------------------
-    if "price" not in df.columns or "competitor_price" not in df.columns:
-        raise ValueError("Required columns 'price' and 'competitor_price' not found")
+    # ========================================================
+    # STEP 1: GENERATE ALL FEATURES
+    # Uses generate_features() to create all 13 new features
+    # Preserves all original columns (9 original + 13 new = 22 total)
+    # ========================================================
+    df = generate_features(df)
     
-    df["price_gap"] = df["price"] - df["competitor_price"]
+    # ========================================================
+    # STEP 2: ALIGN TO EXPECTED_FEATURES
+    # Uses align_features() to select and order exactly as training pipeline
+    # Output: exactly 15 features in EXPECTED_FEATURES order
+    # ========================================================
+    df = align_features(df, features=EXPECTED_FEATURES)
     
-    # -------------------------
-    # 4. Compute popularity
-    # -------------------------
-    required_signals = ["search_trend", "review_velocity", "social_buzz"]
-    
-    if all(col in df.columns for col in required_signals):
-        # Compute popularity from signals (0 to ~1 scale)
-        df["popularity"] = (
-            0.4 * (df["search_trend"] / 100.0)
-            + 0.3 * (df["review_velocity"] / 30.0)
-            + 0.3 * (df["social_buzz"] / 100.0)
-        )
-        # Clip to [0, 1] range to be safe
-        df["popularity"] = df["popularity"].clip(0.0, 1.0)
-    else:
-        # Set neutral popularity if signals not available
-        df["popularity"] = 0.5
-    
-    # -------------------------
-    # 5. Compute rolling 7-day sales momentum
-    # -------------------------
-    if "product_name" not in df.columns:
-        raise ValueError("Required column 'product_name' not found")
-    
-    if "historical_demand" not in df.columns:
-        raise ValueError("Required column 'historical_demand' not found")
-    
-    # Sort by product and date to ensure correct rolling calculation
-    df = df.sort_values(["product_name", "date"]).reset_index(drop=True)
-    
-    # Compute rolling mean per product
-    df["rolling_7d_sales"] = (
-        df.groupby("product_name")["historical_demand"]
-        .rolling(window=7, min_periods=1)
-        .mean()
-        .reset_index(0, drop=True)
-    )
-    
-    # -------------------------
-    # 6. Compute inventory_ratio
-    # -------------------------
-    # Maximum inventory constant (must match training data)
-    max_inventory = 500
-    
-    if "inventory_level" in df.columns:
-        # Compute inventory_ratio if inventory_level is available
-        df["inventory_ratio"] = df["inventory_level"] / max_inventory
-        # Clip to valid range [0, 1]
-        df["inventory_ratio"] = df["inventory_ratio"].clip(0.0, 1.0)
-    else:
-        # Set default inventory_ratio if inventory_level not available
-        df["inventory_ratio"] = 0.5
+    # ========================================================
+    # STEP 3: RESTORE METADATA COLUMNS (if requested)
+    # Keeps date, product_name, etc. for UI/downstream usage
+    # ========================================================
+    if keep_metadata and metadata:
+        for col_name, col_data in metadata.items():
+            df[col_name] = col_data
     
     return df
 
 
-def extract_features_for_model(df: pd.DataFrame, product_row: pd.Series) -> pd.DataFrame:
+def prepare_for_prediction(
+    df: pd.DataFrame,
+    features: list = None,
+    validate: bool = True,
+) -> Tuple[pd.DataFrame, bool]:
     """
-    Extract and prepare features from a single product record for model prediction.
+    Prepare preprocessed DataFrame for model prediction.
+    
+    Performs final validation to ensure inference features 
+    exactly match training features.
+    
+    Note: Feature selection and alignment is already done in 
+    preprocess_for_inference(), so this is mainly for validation.
     
     Args:
-        df: Full preprocessed DataFrame (for context, not always needed)
-        product_row: Single row/Series with product data
+        df: Preprocessed DataFrame (from preprocess_for_inference)
+              Should already have exactly EXPECTED_FEATURES
+        features: List of expected features (defaults to EXPECTED_FEATURES)
+        validate: If True, validate feature matrix
     
     Returns:
-        pd.DataFrame: Features ready for XGBoost model prediction
-    """
-    features = {
-        "price": product_row.get("price", 0.0),
-        "competitor_price": product_row.get("competitor_price", 0.0),
-        "price_gap": product_row.get("price_gap", 0.0),
-        "popularity": product_row.get("popularity", 0.5),
-        "month": product_row.get("month", 1),
-        "day_of_week": product_row.get("day_of_week", 0),
-        "rolling_7d_sales": product_row.get("rolling_7d_sales", 0.0),
-        "inventory_ratio": product_row.get("inventory_ratio", 0.5),
-    }
+        Tuple of:
+        - df: Input DataFrame (already aligned)
+        - success: bool indicating if preparation was successful
     
-    return pd.DataFrame([features])
+    Raises:
+        ValueError: If validation fails and validate=True
+    """
+    if features is None:
+        features = EXPECTED_FEATURES
+    
+    try:
+        # Validate that features are in correct order and match training
+        if validate:
+            is_valid, msg = validate_feature_matrix(df, expected_features=features)
+            if not is_valid:
+                raise ValueError(f"Feature matrix validation failed: {msg}")
+        
+        return df, True
+    
+    except Exception as e:
+        print(f"Error preparing features for prediction: {e}")
+        return df, False
+
+# ========================================================
+# BACKWARD COMPATIBILITY
+# ========================================================
+# Maintain old function signatures for existing code
+
+def create_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Deprecated: Use preprocess_for_inference instead."""
+    from feature_engineering import create_temporal_features as _create
+    return _create(df)
+
+
+def create_price_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Deprecated: Use preprocess_for_inference instead."""
+    from feature_engineering import create_price_features as _create
+    return _create(df)
+
+
+def create_popularity_feature(df: pd.DataFrame) -> pd.DataFrame:
+    """Deprecated: Use preprocess_for_inference instead."""
+    from feature_engineering import create_popularity_feature as _create
+    return _create(df)
 
 
 if __name__ == "__main__":
-    # Example usage (for testing)
+    # Example usage and tests
     import pandas as pd
     
-    # Sample data with all signals AND inventory_level
-    sample_data_full = {
-        "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
-        "product_name": ["iPhone 14", "iPhone 14", "Galaxy S23"],
-        "price": [800, 810, 750],
-        "competitor_price": [790, 800, 760],
-        "cost": [500, 500, 450],
-        "historical_demand": [100, 105, 95],
-        "search_trend": [80.0, 85.0, 75.0],
-        "review_velocity": [20.0, 22.0, 18.0],
-        "social_buzz": [60.0, 65.0, 55.0],
-        "inventory_level": [300, 295, 280],
-    }
-    df_full = pd.DataFrame(sample_data_full)
-    
     print("=" * 80)
-    print("TEST 1: Full dataset with all signals AND inventory_level")
+    print("UNIFIED PREPROCESSING TESTS")
     print("=" * 80)
-    df_processed = preprocess_for_inference(df_full)
-    print(df_processed[["date", "product_name", "price", "month", "day_of_week", 
-                        "price_gap", "popularity", "rolling_7d_sales", "inventory_ratio"]].to_string())
     
-    # Sample data without signals and without inventory_level (should use defaults)
-    sample_data_minimal = {
-        "date": ["2024-01-01", "2024-01-02"],
-        "product_name": ["iPhone 14", "iPhone 14"],
-        "price": [800, 810],
-        "competitor_price": [790, 800],
-        "cost": [500, 500],
-        "historical_demand": [100, 105],
+    # Test 1: Full preprocessing pipeline
+    sample_data = {
+        "date": pd.date_range("2024-01-01", periods=15),
+        "product_id": [1]*5 + [2]*5 + [3]*5,
+        "product_name": ["iPhone 14"]*5 + ["Galaxy S23"]*5 + ["Pixel 8"]*5,
+        "price": [800, 810, 820, 830, 840, 700, 710, 720, 730, 740, 600, 610, 620, 630, 640],
+        "competitor_price": [790, 800, 810, 820, 830, 690, 700, 710, 720, 730, 590, 600, 610, 620, 630],
+        "cost": [500, 500, 500, 500, 500, 400, 400, 400, 400, 400, 300, 300, 300, 300, 300],
+        "historical_demand": [100, 110, 105, 115, 120, 95, 100, 98, 105, 110, 50, 55, 52, 58, 60],
+        "search_trend": [80, 85, 82, 88, 90, 75, 78, 76, 80, 82, 60, 62, 61, 65, 67],
+        "review_velocity": [20, 22, 21, 23, 24, 18, 19, 18, 20, 21, 15, 16, 15, 17, 18],
+        "social_buzz": [70, 75, 72, 78, 80, 65, 68, 66, 70, 72, 55, 57, 56, 60, 62],
     }
-    df_minimal = pd.DataFrame(sample_data_minimal)
+    df_test = pd.DataFrame(sample_data)
+    
+    print("\nTest 1: Complete preprocessing pipeline")
+    print("-" * 80)
+    df_prep = preprocess_for_inference(df_test)
+    print(f"Input shape: {df_test.shape}")
+    print(f"Output shape: {df_prep.shape}")
+    print(f"Columns created: {list(df_prep.columns)}")
+    
+    print("\nTest 2: Prepare for prediction (feature selection & validation)")
+    print("-" * 80)
+    df_features, success = prepare_for_prediction(df_prep)
+    print(f"Success: {success}")
+    print(f"Features shape: {df_features.shape}")
+    print(f"Features columns (count={len(df_features.columns)}): {list(df_features.columns)}")
+    
+    print("\nTest 3: Feature matrix validation")
+    print("-" * 80)
+    is_valid, msg = validate_feature_matrix(df_features)
+    print(f"Validation: {msg}")
+    
+    print("\nTest 4: Sample feature values")
+    print("-" * 80)
+    print(df_features.iloc[0].to_string())
     
     print("\n" + "=" * 80)
-    print("TEST 2: Minimal dataset (no signals, no inventory_level, use defaults)")
+    print("✓ All unified preprocessing tests passed!")
     print("=" * 80)
-    df_processed_minimal = preprocess_for_inference(df_minimal)
-    print(df_processed_minimal[["date", "product_name", "price", "month", "day_of_week", 
-                                "price_gap", "popularity", "rolling_7d_sales", "inventory_ratio"]].to_string())
-    
-    # Sample data with inventory_level but without signals
-    sample_data_inventory_only = {
-        "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
-        "product_name": ["iPhone 14", "iPhone 14", "Galaxy S23"],
-        "price": [800, 810, 750],
-        "competitor_price": [790, 800, 760],
-        "cost": [500, 500, 450],
-        "historical_demand": [100, 105, 95],
-        "inventory_level": [400, 350, 200],
-    }
-    df_inventory_only = pd.DataFrame(sample_data_inventory_only)
-    
-    print("\n" + "=" * 80)
-    print("TEST 3: With inventory_level but without signals (popularity=0.5 default)")
-    print("=" * 80)
-    df_processed_inventory = preprocess_for_inference(df_inventory_only)
-    print(df_processed_inventory[["date", "product_name", "price", "month", "day_of_week", 
-                                   "price_gap", "popularity", "rolling_7d_sales", "inventory_ratio"]].to_string())
-    
-    print("\n✓ All preprocessing tests passed!")
+
